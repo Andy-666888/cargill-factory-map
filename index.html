@@ -1,0 +1,2369 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>工厂分布地图</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" />
+    <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif; display: flex; height: 100vh; overflow: hidden; }
+        
+        /* 左侧面板 */
+        #left-panel {
+            width: 320px;
+            min-width: 320px;
+            height: 100vh;
+            background: #fff;
+            border-right: 1px solid #e8e8e8;
+            display: flex;
+            flex-direction: column;
+            z-index: 1000;
+            box-shadow: 2px 0 8px rgba(0,0,0,0.06);
+        }
+        #left-header {
+            padding: 16px;
+            border-bottom: 1px solid #f0f0f0;
+            flex-shrink: 0;
+        }
+        #left-header h2 {
+            font-size: 16px;
+            color: #333;
+            margin-bottom: 4px;
+        }
+        #left-header .subtitle {
+            font-size: 12px;
+            color: #999;
+        }
+        
+        /* 搜索框 */
+        #search-box {
+            padding: 10px 16px;
+            border-bottom: 1px solid #f0f0f0;
+            flex-shrink: 0;
+        }
+        #search-input {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            font-size: 13px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        #search-input:focus { border-color: #1890ff; }
+        #search-input::placeholder { color: #bbb; }
+        
+        /* 工厂列表 */
+        #factory-list-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px 0;
+        }
+        
+        .material-group {
+            margin-bottom: 4px;
+        }
+        .material-group-header {
+            display: flex;
+            align-items: center;
+            padding: 8px 16px;
+            cursor: pointer;
+            user-select: none;
+            background: #fafafa;
+            border-bottom: 1px solid #f0f0f0;
+            position: sticky;
+            top: 0;
+            z-index: 1;
+        }
+        .material-group-header:hover { background: #f5f5f5; }
+        .material-group-header .arrow {
+            font-size: 10px;
+            color: #999;
+            margin-right: 8px;
+            transition: transform 0.2s;
+        }
+        .material-group-header .arrow.collapsed { transform: rotate(-90deg); }
+        .material-group-header .group-name {
+            font-size: 13px;
+            font-weight: 600;
+            color: #333;
+            flex: 1;
+        }
+        .material-group-header .group-count {
+            font-size: 11px;
+            color: #999;
+            background: #f0f0f0;
+            padding: 1px 8px;
+            border-radius: 10px;
+        }
+        
+        .factory-items { display: block; }
+        .factory-items.collapsed { display: none; }
+        
+        .factory-item {
+            display: flex;
+            align-items: flex-start;
+            padding: 8px 16px 8px 34px;
+            cursor: pointer;
+            transition: background 0.15s;
+            border-bottom: 1px solid #fafafa;
+        }
+        .factory-item:hover { background: #e6f7ff; }
+        .factory-item .item-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            margin-right: 8px;
+            margin-top: 4px;
+            flex-shrink: 0;
+        }
+        .factory-item .item-dot.jg { background: #e74c3c; clip-path: polygon(50% 0%,61% 35%,98% 35%,68% 57%,79% 91%,50% 70%,21% 91%,32% 57%,2% 35%,39% 35%); width: 10px; height: 10px; border-radius: 0; }
+        .factory-item .item-dot.zy { background: #52c41a; }
+        .factory-item .item-dot.dk { background: #3498db; }
+        .factory-item .item-dot.jj { width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-bottom: 9px solid #e67e22; border-radius: 0; }
+        .factory-item .item-info { flex: 1; min-width: 0; }
+        .factory-item .item-name {
+            font-size: 12px;
+            color: #333;
+            line-height: 1.5;
+            word-break: break-all;
+        }
+        .factory-item .item-note {
+            font-size: 11px;
+            color: #999;
+            margin-top: 2px;
+        }
+        .factory-item .item-type {
+            font-size: 10px;
+            padding: 1px 6px;
+            border-radius: 3px;
+            flex-shrink: 0;
+            margin-left: 8px;
+            margin-top: 2px;
+        }
+        .item-type.jg { background: #fff1f0; color: #c0392b; }
+        .item-type.zy { background: #f6ffed; color: #389e0d; }
+        .item-type.dk { background: #e6f7ff; color: #096dd9; }
+        .item-type.jj { background: #fff7e6; color: #ad4e00; }
+        
+        /* 固定名称按钮 */
+        .item-pin-btn {
+            width: 22px; height: 22px;
+            border: none; border-radius: 4px;
+            background: transparent;
+            cursor: pointer;
+            font-size: 13px;
+            display: flex; align-items: center; justify-content: center;
+            flex-shrink: 0;
+            margin-left: 4px;
+            opacity: 0.35;
+            transition: all 0.2s;
+        }
+        .factory-item:hover .item-pin-btn { opacity: 0.7; }
+        .item-pin-btn:hover { opacity: 1 !important; background: #f0f0f0; }
+        .item-pin-btn.pinned { opacity: 1 !important; color: #e74c3c; }
+        
+        .empty-state {
+            text-align: center;
+            padding: 40px 16px;
+            color: #999;
+            font-size: 13px;
+        }
+        
+        #left-stats {
+            padding: 10px 16px;
+            background: #f9f9f9;
+            border-top: 1px solid #f0f0f0;
+            font-size: 12px;
+            color: #666;
+            flex-shrink: 0;
+        }
+        #left-stats .num { font-weight: bold; color: #333; }
+        
+        /* 右侧地图 */
+        #map-container {
+            flex: 1;
+            position: relative;
+            height: 100vh;
+        }
+        #map { width: 100%; height: 100%; }
+        
+        /* 右上控制面板 */
+        #control-panel {
+            position: absolute;
+            top: 55px;
+            right: 10px;
+            z-index: 1000;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+            padding: 14px;
+            width: 270px;
+        }
+        #control-panel h3 {
+            font-size: 14px;
+            color: #333;
+            margin-bottom: 12px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+        
+        .category-toggle {
+            display: flex;
+            align-items: center;
+            padding: 6px 0;
+            border-bottom: 1px solid #f5f5f5;
+            cursor: pointer;
+            user-select: none;
+        }
+        .category-toggle:last-of-type { border-bottom: none; }
+        
+        .toggle-icon {
+            width: 24px; height: 24px;
+            display: flex; align-items: center; justify-content: center;
+            margin-right: 8px; flex-shrink: 0;
+        }
+        .toggle-icon.star { color: #e74c3c; font-size: 20px; }
+        .toggle-icon.circle { 
+            width: 12px; height: 12px; background: #52c41a; 
+            border-radius: 50%; border: 2px solid white;
+            box-shadow: 0 0 0 1px #52c41a;
+        }
+        .toggle-icon.triangle {
+            width: 0; height: 0;
+            border-left: 7px solid transparent;
+            border-right: 7px solid transparent;
+            border-bottom: 12px solid #e67e22;
+        }
+        .toggle-icon.blue-circle {
+            width: 12px; height: 12px; background: #3498db;
+            border-radius: 50%; border: 2px solid white;
+            box-shadow: 0 0 0 1px #3498db;
+        }
+        
+        .toggle-info { flex: 1; }
+        .toggle-name { font-size: 12px; color: #333; font-weight: 500; }
+        .toggle-desc { font-size: 10px; color: #999; margin-top: 1px; }
+        
+        .toggle-switch {
+            width: 36px; height: 20px;
+            background: #ddd; border-radius: 10px;
+            position: relative; transition: background 0.3s; flex-shrink: 0;
+        }
+        .toggle-switch.on { background: #52c41a; }
+        .toggle-switch::after {
+            content: ''; position: absolute;
+            top: 2px; left: 2px;
+            width: 16px; height: 16px;
+            background: white; border-radius: 50%;
+            transition: transform 0.3s;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+        }
+        .toggle-switch.on::after { transform: translateX(16px); }
+        
+        .toggle-count {
+            font-size: 11px; color: #999;
+            margin-left: 6px; min-width: 24px; text-align: right;
+        }
+        
+        .filter-section {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 2px solid #f0f0f0;
+        }
+        .filter-section h4 {
+            font-size: 12px; color: #555; margin-bottom: 8px;
+        }
+        .filter-group {
+            display: flex; flex-wrap: wrap; gap: 5px;
+        }
+        .filter-btn {
+            display: inline-flex; align-items: center;
+            padding: 4px 10px; border-radius: 14px;
+            border: 1px solid #e0e0e0; background: #fafafa;
+            font-size: 11px; color: #666;
+            cursor: pointer; transition: all 0.2s; user-select: none;
+        }
+        .filter-btn:hover { border-color: #999; background: #f0f0f0; }
+        .filter-btn.active { 
+            background: #e6f7ff; border-color: #1890ff; 
+            color: #1890ff; font-weight: 500;
+        }
+        
+        #stats-bar {
+            position: absolute;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1000;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.15);
+            padding: 6px 18px;
+            font-size: 12px;
+            color: #666;
+            white-space: nowrap;
+        }
+        #stats-bar .num { font-weight: bold; color: #333; }
+        
+
+        /* 绘图/交互模式下工厂标记穿透 */
+        .leaflet-container.draw-mode .legend-marker { pointer-events: none !important; }
+
+        /* 标记 */
+        .legend-marker { background: none; border: none; }
+        .legend-star {
+            font-size: 22px; color: #e74c3c;
+            text-shadow: 0 1px 3px rgba(0,0,0,0.3);
+        }
+        .legend-circle {
+            width: 18px; height: 18px;
+            background: #52c41a; border-radius: 50%;
+            border: 2px solid white;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+        }
+        .legend-triangle {
+            width: 0; height: 0;
+            border-left: 8px solid transparent;
+            border-right: 8px solid transparent;
+            border-bottom: 14px solid #e67e22;
+            filter: drop-shadow(0 1px 2px rgba(0,0,0,0.3));
+        }
+        .legend-blue-circle {
+            width: 18px; height: 18px;
+            background: #3498db; border-radius: 50%;
+            border: 2px solid white;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+        }
+        
+        /* Popup */
+        .leaflet-popup-content-wrapper { border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+        .popup-content { padding: 4px; min-width: 200px; }
+        .popup-title { font-size: 14px; font-weight: 600; color: #333; margin-bottom: 6px; line-height: 1.4; }
+        .popup-detail { font-size: 12px; color: #666; line-height: 1.6; }
+        .popup-tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; margin-top: 6px; }
+        .tag-red { background: #fff1f0; color: #cf1322; }
+        .tag-green { background: #f6ffed; color: #389e0d; }
+        .tag-blue { background: #e6f7ff; color: #096dd9; }
+
+        /* 面板切换按钮 */
+        #panel-toggle {
+            position: absolute;
+            left: 320px;
+            top: 50%;
+            transform: translateY(-50%);
+            z-index: 1001;
+            width: 24px;
+            height: 48px;
+            background: white;
+            border: 1px solid #e8e8e8;
+            border-left: none;
+            border-radius: 0 8px 8px 0;
+            box-shadow: 2px 0 8px rgba(0,0,0,0.06);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            color: #666;
+            transition: left 0.3s ease;
+        }
+        #panel-toggle:hover { background: #f5f5f5; color: #333; }
+        body.panel-collapsed #left-panel { margin-left: -320px; }
+        body.panel-collapsed #panel-toggle { left: 0px; }
+        /* 右侧面板折叠/展开按钮 */
+        #cp-toggle {
+            position: absolute;
+            top: 55px;
+            right: 10px;
+            z-index: 1001;
+            width: 32px;
+            height: 32px;
+            background: white;
+            border: 1px solid #e8e8e8;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            color: #666;
+            transition: all 0.3s ease;
+            user-select: none;
+        }
+        #cp-toggle:hover { background: #f5f5f5; color: #333; }
+        #control-panel.cp-hidden { display: none; }
+
+        
+        /* 嘉吉工厂筛选框 */
+        .jg-filter-wrap { padding: 4px 0 6px 0; }
+        .jg-filter-input {
+            width: 100%;
+            padding: 5px 10px;
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            font-size: 11px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        .jg-filter-input:focus { border-color: #e74c3c; }
+        .jg-filter-input::placeholder { color: #bbb; }
+
+        /* 测距工具 */
+        #measure-btn {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 1000;
+            background: white;
+            border: none;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            padding: 8px 14px;
+            font-size: 13px;
+            color: #333;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s;
+            user-select: none;
+        }
+        #measure-btn:hover { background: #f5f5f5; }
+        #measure-btn.active { background: #e74c3c; color: white; }
+        #measure-btn.active:hover { background: #c0392b; }
+        #measure-info {
+            position: absolute;
+            top: 50px;
+            left: 10px;
+            z-index: 1000;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            padding: 10px 14px;
+            font-size: 12px;
+            color: #333;
+            display: none;
+            min-width: 180px;
+        }
+        #measure-info .mi-title { font-weight: 600; margin-bottom: 6px; font-size: 13px; }
+        #measure-info .mi-seg { color: #666; line-height: 1.8; }
+        #measure-info .mi-total { font-weight: 600; color: #e74c3c; font-size: 14px; margin-top: 6px; padding-top: 6px; border-top: 1px solid #f0f0f0; }
+        #measure-info .mi-clear { margin-top: 8px; text-align: center; }
+        #measure-info .mi-clear span { color: #1890ff; cursor: pointer; font-size: 11px; }
+        #measure-info .mi-clear span:hover { text-decoration: underline; }
+        .measure-dot {
+            width: 8px; height: 8px;
+            background: #e74c3c;
+            border: 2px solid white;
+            border-radius: 50%;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+        }
+        .measure-dist-label {
+            background: rgba(231, 76, 60, 0.85);
+            color: white;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: 500;
+            white-space: nowrap;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+        }
+
+        /* 绘图工具栏 */
+        #draw-toolbar {
+            position: absolute;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1000;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            padding: 4px 6px;
+            display: flex;
+            gap: 2px;
+            align-items: center;
+        }
+        #draw-toolbar .dt-sep {
+            width: 1px;
+            height: 24px;
+            background: #e8e8e8;
+            margin: 0 4px;
+        }
+        .dt-btn {
+            width: 32px; height: 32px;
+            border: none;
+            border-radius: 6px;
+            background: transparent;
+            cursor: pointer;
+            font-size: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            position: relative;
+        }
+        .dt-btn:hover { background: #f0f0f0; }
+        .dt-btn.active { background: #e74c3c; color: white; }
+        .dt-btn .dt-tip {
+            display: none;
+            position: absolute;
+            bottom: -28px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #333;
+            color: white;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            white-space: nowrap;
+            pointer-events: none;
+        }
+        .dt-btn:hover .dt-tip { display: block; }
+        
+        /* 颜色选择器 */
+        #draw-color-picker {
+            display: flex;
+            gap: 3px;
+            align-items: center;
+        }
+        .color-dot {
+            width: 16px; height: 16px;
+            border-radius: 50%;
+            border: 2px solid transparent;
+            cursor: pointer;
+            transition: border-color 0.2s;
+        }
+        .color-dot:hover { border-color: #999; }
+        .color-dot.active { border-color: #333; }
+        
+        /* 文字标注弹窗 */
+        #text-label-dialog {
+            display: none;
+            position: fixed;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.3);
+            padding: 20px;
+            z-index: 2000;
+            min-width: 300px;
+        }
+        #text-label-dialog h3 { margin: 0 0 12px 0; font-size: 15px; color: #333; }
+        #text-label-dialog input {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+            outline: none;
+        }
+        #text-label-dialog input:focus { border-color: #e74c3c; }
+        #text-label-dialog .td-btns { margin-top: 14px; text-align: right; }
+        #text-label-dialog .td-btns button {
+            padding: 6px 16px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            margin-left: 8px;
+        }
+        #td-cancel { background: #f0f0f0; color: #666; }
+        #td-ok { background: #e74c3c; color: white; }
+        
+        /* 地图上的文字标注样式 */
+        .text-label-marker {
+            background: none;
+            border: none;
+        }
+        .text-label-content {
+            background: rgba(255,255,255,0.92);
+            padding: 3px 10px;
+            border-radius: 4px;
+            font-size: 13px;
+            font-weight: 500;
+            white-space: nowrap;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+            border-left: 3px solid #e74c3c;
+        }
+        /* 导入提示 */
+        #import-toast {
+            position: fixed;
+            top: 60px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #2ecc71;
+            color: white;
+            padding: 10px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            z-index: 10000;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+            display: none;
+            white-space: nowrap;
+        }
+        #import-toast.error { background: #e74c3c; }
+        /* 工具栏按钮组 */
+        .tools-section { margin-top: 12px; padding-top: 10px; border-top: 2px solid #f0f0f0; }
+        .tools-section h4 { font-size: 13px; color: #555; margin-bottom: 8px; }
+        .tools-row { display: flex; flex-wrap: wrap; gap: 6px; }
+        .tool-btn {
+            display: inline-flex; align-items: center; gap: 4px;
+            padding: 6px 10px; border: 1px solid #ddd; border-radius: 6px;
+            background: #fafafa; cursor: pointer; font-size: 12px; color: #333;
+            transition: all 0.2s;
+        }
+        .tool-btn:hover { background: #e8f4fd; border-color: #3498db; }
+        .tool-btn.active { background: #3498db; color: white; border-color: #3498db; }
+        .tool-btn .tool-icon { font-size: 14px; }
+
+        /* 悬停提示样式 - 基础样式 */
+        .leaflet-tooltip.factory-tip {
+            background: rgba(255,255,255,0.85);
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 12px;
+            font-weight: 500;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+        }
+        /* 各类别颜色：嘉吉红、可用绿、关注蓝、竞争橙 */
+        .leaflet-tooltip.factory-tip-jg { border: 1.5px solid #e74c3c; color: #c0392b; }
+        .leaflet-tooltip.factory-tip-jg::before { border-top-color: #e74c3c; }
+        .leaflet-tooltip.factory-tip-zy { border: 1.5px solid #52c41a; color: #2d7a0e; }
+        .leaflet-tooltip.factory-tip-zy::before { border-top-color: #52c41a; }
+        .leaflet-tooltip.factory-tip-dk { border: 1.5px solid #3498db; color: #1a6ea8; }
+        .leaflet-tooltip.factory-tip-dk::before { border-top-color: #3498db; }
+        .leaflet-tooltip.factory-tip-jj { border: 1.5px solid #e67e22; color: #ad4e00; }
+        .leaflet-tooltip.factory-tip-jj::before { border-top-color: #e67e22; }
+
+        /* 批量测距面板 */
+        #batch-dist-panel {
+            position: absolute; bottom: 50px; right: 10px;
+            width: 380px; max-height: 420px;
+            background: white; border-radius: 10px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+            z-index: 1001; display: none;
+            overflow: hidden;
+        }
+        #batch-dist-panel .bdp-header {
+            background: linear-gradient(135deg, #3498db, #2980b9);
+            color: white; padding: 10px 14px;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        #batch-dist-panel .bdp-header h4 { font-size: 13px; margin: 0; }
+        #batch-dist-panel .bdp-close {
+            background: none; border: none; color: white; cursor: pointer;
+            font-size: 16px; padding: 0 4px;
+        }
+        #batch-dist-panel .bdp-body {
+            max-height: 340px; overflow-y: auto; padding: 8px;
+        }
+        #batch-dist-panel table {
+            width: 100%; border-collapse: collapse; font-size: 12px;
+        }
+        #batch-dist-panel th {
+            background: #f5f5f5; padding: 6px 8px; text-align: left;
+            position: sticky; top: 0; border-bottom: 1px solid #ddd;
+        }
+        #batch-dist-panel td { padding: 5px 8px; border-bottom: 1px solid #f0f0f0; }
+        #batch-dist-panel tr:hover td { background: #e8f4fd; }
+        #batch-dist-panel .dist-val { font-weight: 600; color: #e74c3c; }
+        .bdp-hint {
+            padding: 20px; text-align: center; color: #999; font-size: 13px;
+        }
+
+        /* 画圈半径选择器 */
+        #circle-radius-popup {
+            position: absolute; z-index: 1002;
+            background: white; border-radius: 8px;
+            box-shadow: 0 4px 14px rgba(0,0,0,0.2);
+            padding: 8px; display: none;
+        }
+        #circle-radius-popup .crp-title {
+            font-size: 12px; color: #666; margin-bottom: 6px; text-align: center;
+        }
+        #circle-radius-popup .crp-options {
+            display: flex; gap: 4px; flex-wrap: wrap; justify-content: center;
+        }
+        #circle-radius-popup .crp-opt {
+            padding: 4px 10px; border: 1px solid #ddd; border-radius: 4px;
+            cursor: pointer; font-size: 12px; background: #fafafa;
+            transition: all 0.15s;
+        }
+        #circle-radius-popup .crp-opt:hover { background: #e8f4fd; border-color: #3498db; }
+        #circle-radius-popup .crp-opt.active { background: #3498db; color: white; border-color: #3498db; }
+
+        /* 已画圆圈列表 */
+        #circle-list-panel {
+            position: absolute; bottom: 50px; left: 50%;
+            transform: translateX(-50%);
+            background: white; border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.15);
+            padding: 6px 12px; z-index: 1001;
+            display: none; font-size: 12px;
+            max-width: 500px;
+        }
+        #circle-list-panel .clp-items {
+            display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+        }
+        .clp-item {
+            display: inline-flex; align-items: center; gap: 3px;
+            background: #f0f0f0; padding: 2px 8px; border-radius: 4px;
+        }
+        .clp-item .clp-remove {
+            cursor: pointer; color: #e74c3c; font-weight: bold;
+            margin-left: 2px;
+        }
+        </style>
+</head>
+<body>
+    <!-- 左侧面板 -->
+    <div id="left-panel">
+        <div id="left-header">
+            <h2>📋 厂家明细</h2>
+            <div class="subtitle">按原料分类展示，点击可定位到地图</div>
+        </div>
+        <div id="search-box">
+            <input type="text" id="search-input" placeholder="🔍 搜索工厂名称..." oninput="onSearch(this.value)">
+        </div>
+        <div id="factory-list-container">
+            <div id="factory-list"></div>
+        </div>
+        <div id="left-stats">
+            当前筛选显示 <span class="num" id="left-count">0</span> 家工厂
+        </div>
+    </div>
+    
+    <div id="panel-toggle" onclick="togglePanel()" title="隐藏/显示面板">&#9664;</div>
+    <!-- 右侧地图 -->
+    <div id="map-container">
+        <div id="map"></div>
+        
+        <button id="measure-btn" onclick="toggleMeasure()">📏 测距</button>
+        <div id="measure-info"></div>
+        
+        <div id="draw-toolbar">
+            <button class="dt-btn" data-draw="marker" title="标记点" onclick="startDraw('marker')">📍<span class="dt-tip">标记点</span></button>
+            <button class="dt-btn" data-draw="polyline" title="线条" onclick="startDraw('polyline')">〰️<span class="dt-tip">线条</span></button>
+            <button class="dt-btn" data-draw="arrow" title="箭头" onclick="startDraw('arrow')">➡️<span class="dt-tip">箭头</span></button>
+            <button class="dt-btn" data-draw="polygon" title="多边形" onclick="startDraw('polygon')">⬡<span class="dt-tip">多边形</span></button>
+            <button class="dt-btn" data-draw="rectangle" title="矩形" onclick="startDraw('rectangle')">▭<span class="dt-tip">矩形</span></button>
+            <button class="dt-btn" data-draw="circle" title="圆形" onclick="startDraw('circle')">◯<span class="dt-tip">圆形</span></button>
+            <button class="dt-btn" data-draw="text" title="文字标注" onclick="startDraw('text')">📝<span class="dt-tip">文字标注</span></button>
+            <div class="dt-sep"></div>
+            <div id="draw-color-picker">
+                <div class="color-dot active" style="background:#e74c3c" data-color="#e74c3c" onclick="setDrawColor(this)"></div>
+                <div class="color-dot" style="background:#3498db" data-color="#3498db" onclick="setDrawColor(this)"></div>
+                <div class="color-dot" style="background:#2ecc71" data-color="#2ecc71" onclick="setDrawColor(this)"></div>
+                <div class="color-dot" style="background:#f39c12" data-color="#f39c12" onclick="setDrawColor(this)"></div>
+                <div class="color-dot" style="background:#9b59b6" data-color="#9b59b6" onclick="setDrawColor(this)"></div>
+                <div class="color-dot" style="background:#333333" data-color="#333333" onclick="setDrawColor(this)"></div>
+            </div>
+            <div class="dt-sep"></div>
+            <button class="dt-btn" title="编辑图形" onclick="toggleEditDraw()">✏️<span class="dt-tip">编辑/拖动</span></button>
+            <button class="dt-btn" title="删除图形" onclick="toggleDeleteDraw()">🗑️<span class="dt-tip">删除图形</span></button>
+            <button class="dt-btn" title="清除全部" onclick="clearAllDraw()">🧹<span class="dt-tip">清除全部</span></button>
+            <div class="dt-sep"></div>
+            <button class="dt-btn" id="import-excel-btn" title="导入Excel数据" onclick="document.getElementById('excel-file-input').click()">📥<span class="dt-tip">导入Excel</span></button>
+            <input type="file" id="excel-file-input" accept=".xlsx,.xls" style="display:none" onchange="importExcel(this)" />
+        </div>
+        <div id="text-label-dialog">
+            <h3>📝 输入标注文字</h3>
+            <input type="text" id="text-label-input" placeholder="输入文字内容..." maxlength="50">
+            <div class="td-btns">
+                <button id="td-cancel" onclick="cancelTextLabel()">取消</button>
+                <button id="td-ok" onclick="confirmTextLabel()">确定</button>
+            </div>
+        </div>
+        
+        <div id="cp-toggle" onclick="toggleControlPanel()" title="隐藏/显示控制面板">⚙️</div>
+        <div id="control-panel">
+            <h3>🗺️ 工厂分布筛选</h3>
+            
+            <div class="category-toggle" onclick="toggleCategory('jg')">
+                <div class="toggle-icon star">★</div>
+                <div class="toggle-info">
+                    <div class="toggle-name">嘉吉工厂</div>
+                    <div class="toggle-desc">红色五角星</div>
+                </div>
+                <div class="toggle-switch on" id="switch-jg"></div>
+                <div class="toggle-count" id="count-jg">27</div>
+            </div>
+            <div class="jg-filter-wrap">
+                <input type="text" class="jg-filter-input" id="jg-search-input" placeholder="&#128269; 搜索嘉吉工厂..." oninput="onJGSearch(this.value)">
+            </div>
+            
+            <div class="category-toggle" onclick="toggleCategory('zy')">
+                <div class="toggle-icon circle"></div>
+                <div class="toggle-info">
+                    <div class="toggle-name">可用</div>
+                    <div class="toggle-desc">绿色实心圆点</div>
+                </div>
+                <div class="toggle-switch on" id="switch-zy"></div>
+                <div class="toggle-count" id="count-zy">101</div>
+            </div>
+            
+            <div class="category-toggle" onclick="toggleCategory('dk')">
+                <div class="toggle-icon blue-circle"></div>
+                <div class="toggle-info">
+                    <div class="toggle-name">关注</div>
+                    <div class="toggle-desc">蓝色实心圆点</div>
+                </div>
+                <div class="toggle-switch on" id="switch-dk"></div>
+                <div class="toggle-count" id="count-dk">141</div>
+            </div>
+            
+            <div class="category-toggle" onclick="toggleCategory('jj')">
+                <div class="toggle-icon triangle"></div>
+                <div class="toggle-info">
+                    <div class="toggle-name">竞争厂家</div>
+                    <div class="toggle-desc">橙色实心三角形</div>
+                </div>
+                <div class="toggle-switch on" id="switch-jj"></div>
+                <div class="toggle-count" id="count-jj">269</div>
+            </div>
+            
+            <div class="filter-section">
+                <h4>📦 按原料名称筛选</h4>
+                <div class="filter-group">
+                <div class="filter-btn active" data-material="喷浆玉米皮" onclick="toggleMaterial(this)">喷浆玉米皮</div>
+                <div class="filter-btn active" data-material="喷浆玉米胚芽粕" onclick="toggleMaterial(this)">喷浆玉米胚芽粕</div>
+                <div class="filter-btn active" data-material="木薯干全酒精糟" onclick="toggleMaterial(this)">木薯干全酒精糟</div>
+                <div class="filter-btn active" data-material="玉米干全酒精糟" onclick="toggleMaterial(this)">玉米干全酒精糟</div>
+                <div class="filter-btn active" data-material="玉米胚芽粕" onclick="toggleMaterial(this)">玉米胚芽粕</div>
+                <div class="filter-btn active" data-material="玉米胚芽饼" onclick="toggleMaterial(this)">玉米胚芽饼</div>
+                <div class="filter-btn active" data-material="玉米蛋白粉" onclick="toggleMaterial(this)">玉米蛋白粉</div>
+                </div>
+            </div>
+
+            <div class="tools-section">
+                <h4>🛠️ 实用工具</h4>
+                <div class="tools-row">
+                    <div class="tool-btn" onclick="exportExcel()"><span class="tool-icon">📤</span>导出筛选结果</div>
+                    <div class="tool-btn" id="batch-dist-btn" onclick="toggleBatchDist()"><span class="tool-icon">📏</span>批量测距</div>
+                    <div class="tool-btn" id="draw-circle-btn" onclick="toggleCircleDraw()"><span class="tool-icon">🔵</span>画圈工具</div>
+                </div>
+                <div class="tools-row" style="margin-top:6px">
+                    <div class="tool-btn" id="label-toggle-btn" onclick="toggleLabels()"><span class="tool-icon">📌</span>固定名称</div>
+                </div>
+            </div>
+        </div>
+        
+        <div id="stats-bar">
+            当前显示 <span class="num" id="visible-count">269</span> / 269 家工厂
+        </div>
+
+        <!-- 批量测距面板 -->
+        <div id="batch-dist-panel">
+            <div class="bdp-header">
+                <h4>📏 批量距离测算</h4>
+                <button class="bdp-close" onclick="closeBatchDist()">✕</button>
+            </div>
+            <div class="bdp-body" id="bdp-body">
+                <div class="bdp-hint">👆 请在地图上点击选择一个参考工厂<br><small>将计算该点到所有可见工厂的距离</small></div>
+            </div>
+        </div>
+
+        <!-- 画圈半径选择器 -->
+        <div id="circle-radius-popup">
+            <div class="crp-title">选择半径后点击地图放置</div>
+            <div class="crp-options">
+                <div class="crp-opt" data-radius="10000" onclick="setCircleRadius(this, 10000)">10km</div>
+                <div class="crp-opt" data-radius="20000" onclick="setCircleRadius(this, 20000)">20km</div>
+                <div class="crp-opt" data-radius="50000" onclick="setCircleRadius(this, 50000)">50km</div>
+                <div class="crp-opt active" data-radius="100000" onclick="setCircleRadius(this, 100000)">100km</div>
+                <div class="crp-opt" data-radius="200000" onclick="setCircleRadius(this, 200000)">200km</div>
+                <div class="crp-opt" data-radius="500000" onclick="setCircleRadius(this, 500000)">500km</div>
+            </div>
+        </div>
+
+        <!-- 圆圈列表 -->
+        <div id="circle-list-panel">
+            <div class="clp-items" id="clp-items"></div>
+        </div>
+    </div>
+    
+    <script>
+        // 数据
+        var dataJG = [{"name": "嘉吉饲料（抚顺）有限公司", "note": "", "lng": 123.711752, "lat": 41.802355}, {"name": "嘉吉饲料(哈尔滨)有限公司", "note": "", "lng": 126.678962, "lat": 45.624951}, {"name": "嘉吉饲料（内蒙古）有限公司", "note": "", "lng": 109.874367, "lat": 40.617177}, {"name": "农标普瑞纳（廊坊）饲料有限公司", "note": "", "lng": 116.8079, "lat": 39.493533}, {"name": "嘉吉动物营养（郑州）有限公司", "note": "", "lng": 113.525249, "lat": 34.794542}, {"name": "嘉吉饲料（陕西）有限公司", "note": "", "lng": 108.11349, "lat": 34.257128}, {"name": "嘉吉动物营养（开封）有限公司", "note": "", "lng": 114.452641, "lat": 34.737134}, {"name": "嘉吉饲料（泰安）有限公司", "note": "", "lng": 117.129152, "lat": 36.109185}, {"name": "烟台农标普瑞纳饲料有限公司", "note": "", "lng": 121.369614, "lat": 37.588344}, {"name": "嘉吉动物营养饲料（济宁）有限公司", "note": "", "lng": 116.453433, "lat": 35.423559}, {"name": "嘉吉饲料（嘉兴）有限公司", "note": "", "lng": 120.836253, "lat": 30.833231}, {"name": "嘉吉饲料（漳州）有限公司", "note": "", "lng": 118.001752, "lat": 24.402001}, {"name": "嘉吉饲料（合肥）有限公司", "note": "", "lng": 117.090803, "lat": 32.159275}, {"name": "嘉吉饲料(长沙)有限公司", "note": "", "lng": 113.074462, "lat": 28.234671}, {"name": "嘉吉饲料(武汉)有限公司", "note": "", "lng": 113.931176, "lat": 30.688384}, {"name": "嘉吉饲料(佛山)有限公司", "note": "", "lng": 112.825668, "lat": 22.980099}, {"name": "嘉吉饲料（阳江）有限公司", "note": "", "lng": 111.943651, "lat": 22.004783}, {"name": "嘉吉饲料（镇江）有限公司", "note": "", "lng": 119.663375, "lat": 32.194339}, {"name": "嘉吉动物营养（昆明）有限公司", "note": "", "lng": 103.043323, "lat": 25.251042}, {"name": "嘉吉饲料(重庆)有限公司", "note": "", "lng": 105.624958, "lat": 29.402476}, {"name": "嘉吉饲料（天津）有限公司", "note": "", "lng": 117.031021, "lat": 39.418962}, {"name": "嘉吉饲料（宜春）有限公司", "note": "", "lng": 114.418747, "lat": 27.904442}, {"name": "嘉吉饲料（南宁）有限公司", "note": "", "lng": 108.143371, "lat": 23.208828}, {"name": "嘉吉饲料（吉林）有限公司", "note": "", "lng": 126.466185, "lat": 43.887264}, {"name": "嘉吉宠物食品（嘉兴）有限公司", "note": "", "lng": 120.933184, "lat": 30.593388}, {"name": "嘉吉饲料（南平）有限公司", "note": "", "lng": 118.357632, "lat": 27.077086}, {"name": "嘉吉动物营养（南宁）有限公司", "note": "", "lng": 108.30067, "lat": 22.750211}];
+        var dataZY = [{"material": "玉米胚芽粕", "name": "内蒙古惠典油脂有限公司", "note": "", "lng": 107.0062, "lat": 40.3401}, {"material": "玉米胚芽粕", "name": "河北惠典油脂有限公司", "note": "", "lng": 115.232801, "lat": 38.097906}, {"material": "玉米胚芽粕", "name": "松原市惠典油脂有限责任公司", "note": "", "lng": 124.821091, "lat": 45.092991}, {"material": "玉米胚芽粕", "name": "辽宁益海嘉里淀粉科技有限公司", "note": "", "lng": 124.042003, "lat": 42.558448}, {"material": "玉米胚芽粕", "name": "通辽市德瑞玉米工业有限公司", "note": "", "lng": 122.235071, "lat": 43.444928}, {"material": "玉米胚芽粕", "name": "吉林旭鑫油脂有限公司", "note": "", "lng": 124.817524, "lat": 45.08725}, {"material": "玉米胚芽粕", "name": "长寿花食品股份有限公司", "note": "", "lng": 117.70817, "lat": 36.941008}, {"material": "玉米胚芽粕", "name": "舟山华康生物科技有限公司", "note": "", "lng": 121.997105, "lat": 30.046024}, {"material": "玉米胚芽粕", "name": "内蒙古宏焱油脂有限公司", "note": "", "lng": 111.3145, "lat": 40.1748}, {"material": "玉米胚芽粕", "name": "呼和浩特市绿康源农业科技有限公司", "note": "", "lng": 111.399769, "lat": 40.508287}, {"material": "玉米胚芽粕", "name": "潍坊福运油脂有限公司", "note": "", "lng": 118.850192, "lat": 36.74299}, {"material": "玉米胚芽粕", "name": "龙江翔源玉米油有限公司", "note": "", "lng": 123.270451, "lat": 47.284378}, {"material": "玉米胚芽粕", "name": "长春大合生物技术开发有限公司", "note": "", "lng": 125.861976, "lat": 44.777348}, {"material": "玉米胚芽粕", "name": "‌绥化象屿金谷生化科技有限公司‌", "note": "主营喷浆粕，普通粕蛋白15%", "lng": 126.996575, "lat": 47.078525}, {"material": "玉米胚芽粕", "name": "北安象屿金谷生化科技有限公司", "note": "主营喷浆粕，普通粕蛋白15%", "lng": 126.572088, "lat": 48.233221}, {"material": "玉米胚芽粕", "name": "富锦象屿金谷生化科技有限公司", "note": "主营喷浆粕，普通粕蛋白15%", "lng": 131.004263, "lat": 47.249116}, {"material": "玉米胚芽粕", "name": "益海嘉里（富裕）粮油食品工业有限公司", "note": "主营喷浆粕，普通粕蛋白16%", "lng": 124.476478, "lat": 48.467624}, {"material": "玉米胚芽粕", "name": "五家渠市惠典油脂有限公司", "note": "", "lng": 87.552745, "lat": 44.120376}, {"material": "玉米胚芽粕", "name": "成都市新兴粮油有限公司", "note": "", "lng": 103.6213, "lat": 30.3857}, {"material": "玉米胚芽粕", "name": "四川华宇油脂有限公司", "note": "", "lng": 104.7652, "lat": 31.1328}, {"material": "玉米胚芽饼", "name": "内蒙古玉王生物科技有限公司", "note": "", "lng": 121.281, "lat": 43.633}, {"material": "玉米胚芽饼", "name": "京粮龙江生物工程有限公司", "note": "", "lng": 125.116747, "lat": 46.348417}, {"material": "玉米胚芽饼", "name": "黑龙江龙凤玉米开发有限公司", "note": "", "lng": 125.421764, "lat": 46.586942}, {"material": "喷浆玉米胚芽粕", "name": "中粮生化能源(榆树)有限公司‌", "note": "", "lng": 126.164782, "lat": 44.809516}, {"material": "喷浆玉米胚芽粕", "name": "中粮生化能源（龙江）有限公司", "note": "", "lng": 123.260225, "lat": 47.27677}, {"material": "喷浆玉米胚芽粕", "name": "中粮生化能源（公主岭）有限公司", "note": "", "lng": 124.853893, "lat": 43.508467}, {"material": "喷浆玉米胚芽粕", "name": "平凉国维淀粉有限责任公司", "note": "低毒素货源较少", "lng": 106.797379, "lat": 35.510633}, {"material": "喷浆玉米胚芽粕", "name": "陕西国维淀粉有限责任公司", "note": "低毒素货源较少", "lng": 109.596866, "lat": 34.930277}, {"material": "喷浆玉米皮", "name": "通辽梅花生物科技有限公司", "note": "", "lng": 122.221061, "lat": 43.458026}, {"material": "喷浆玉米皮", "name": "吉林梅花氨基酸有限责任公司", "note": "", "lng": 122.931437, "lat": 45.60001}, {"material": "喷浆玉米皮", "name": "新疆梅花氨基酸有限责任公司", "note": "", "lng": 87.504858, "lat": 44.270822}, {"material": "喷浆玉米皮", "name": "呼伦贝尔东北阜丰生物科技有限公司", "note": "", "lng": 122.832702, "lat": 47.943437}, {"material": "喷浆玉米皮", "name": "齐齐哈尔龙江阜丰生物科技有限公司", "note": "", "lng": 123.874991, "lat": 47.195144}, {"material": "喷浆玉米皮", "name": "新疆阜丰生物科技有限公司", "note": "", "lng": 87.746487, "lat": 44.224005}, {"material": "喷浆玉米皮", "name": "内蒙古阜丰生物科技有限公司", "note": "", "lng": 111.546471, "lat": 40.69999}, {"material": "喷浆玉米皮", "name": "内蒙古伊品生物科技有限公司", "note": "", "lng": 119.216125, "lat": 42.263904}, {"material": "喷浆玉米皮", "name": "宁夏伊品生物科技股份有限公司", "note": "", "lng": 106.244075, "lat": 38.261275}, {"material": "喷浆玉米皮", "name": "黑龙江伊品生物科技有限公司", "note": "", "lng": 124.602494, "lat": 46.792329}, {"material": "喷浆玉米皮", "name": "赤峰华恒合成生物科技有限公司", "note": "", "lng": 119.024762, "lat": 42.214615}, {"material": "喷浆玉米皮", "name": "内蒙古玉王生物科技有限公司", "note": "", "lng": 121.281, "lat": 43.633}, {"material": "喷浆玉米皮", "name": "内蒙古金河淀粉有限责任公司", "note": "", "lng": 111.193, "lat": 40.268}, {"material": "喷浆玉米皮", "name": "内蒙古融成玉米开发有限公司", "note": "", "lng": 111.31, "lat": 40.173}, {"material": "喷浆玉米皮", "name": "内蒙古巴山淀粉有限公司", "note": "", "lng": 107.5115, "lat": 40.8151}, {"material": "喷浆玉米皮", "name": "京粮龙江生物工程有限公司", "note": "", "lng": 125.116747, "lat": 46.348417}, {"material": "喷浆玉米皮", "name": "富锦象屿金谷生化科技有限公司", "note": "", "lng": 131.004263, "lat": 47.249116}, {"material": "喷浆玉米皮", "name": "北安象屿金谷生化科技有限公司", "note": "", "lng": 126.572088, "lat": 48.233221}, {"material": "喷浆玉米皮", "name": "绥化象屿金谷生化科技有限公司", "note": "", "lng": 126.996575, "lat": 47.078525}, {"material": "喷浆玉米皮", "name": "辽宁益海嘉里淀粉科技有限公司", "note": "", "lng": 124.042003, "lat": 42.558448}, {"material": "喷浆玉米皮", "name": "益海嘉里（富裕）生物科技有限公司", "note": "", "lng": 124.476478, "lat": 48.467624}, {"material": "喷浆玉米皮", "name": "舟山华康生物科技有限公司", "note": "", "lng": 121.997105, "lat": 30.046024}, {"material": "喷浆玉米皮", "name": "陕西国维淀粉有限责任公司", "note": "", "lng": 109.596866, "lat": 34.930277}, {"material": "喷浆玉米皮", "name": "平凉国维淀粉有限责任公司", "note": "", "lng": 106.797379, "lat": 35.510633}, {"material": "喷浆玉米皮", "name": "中粮生化能源（龙江）有限公司", "note": "", "lng": 123.260225, "lat": 47.27677}, {"material": "玉米蛋白粉", "name": "通辽梅花生物科技有限公司", "note": "", "lng": 122.221061, "lat": 43.458026}, {"material": "玉米蛋白粉", "name": "吉林梅花氨基酸有限责任公司", "note": "", "lng": 122.931437, "lat": 45.60001}, {"material": "玉米蛋白粉", "name": "新疆梅花氨基酸有限责任公司", "note": "", "lng": 87.504858, "lat": 44.270822}, {"material": "玉米蛋白粉", "name": "呼伦贝尔东北阜丰生物科技有限公司", "note": "", "lng": 122.832702, "lat": 47.943437}, {"material": "玉米蛋白粉", "name": "齐齐哈尔龙江阜丰生物科技有限公司", "note": "", "lng": 123.874991, "lat": 47.195144}, {"material": "玉米蛋白粉", "name": "新疆阜丰生物科技有限公司", "note": "", "lng": 87.746487, "lat": 44.224005}, {"material": "玉米蛋白粉", "name": "内蒙古阜丰生物科技有限公司", "note": "", "lng": 111.546471, "lat": 40.69999}, {"material": "玉米蛋白粉", "name": "内蒙古伊品生物科技有限公司", "note": "", "lng": 119.216125, "lat": 42.263904}, {"material": "玉米蛋白粉", "name": "宁夏伊品生物科技股份有限公司", "note": "", "lng": 106.244075, "lat": 38.261275}, {"material": "玉米蛋白粉", "name": "黑龙江伊品生物科技有限公司", "note": "", "lng": 124.602494, "lat": 46.792329}, {"material": "玉米蛋白粉", "name": "赤峰华恒合成生物科技有限公司", "note": "", "lng": 119.3127, "lat": 42.2819}, {"material": "玉米蛋白粉", "name": "内蒙古玉王生物科技有限公司", "note": "", "lng": 111.1745, "lat": 40.2452}, {"material": "玉米蛋白粉", "name": "内蒙古金河淀粉有限责任公司", "note": "", "lng": 111.193, "lat": 40.268}, {"material": "玉米蛋白粉", "name": "内蒙古融成玉米开发有限公司", "note": "", "lng": 111.31, "lat": 40.173}, {"material": "玉米蛋白粉", "name": "内蒙古巴山淀粉有限公司", "note": "", "lng": 107.5115, "lat": 40.8151}, {"material": "玉米蛋白粉", "name": "京粮龙江生物工程有限公司", "note": "", "lng": 125.116747, "lat": 46.348417}, {"material": "玉米蛋白粉", "name": "富锦象屿金谷生化科技有限公司", "note": "", "lng": 131.004263, "lat": 47.249116}, {"material": "玉米蛋白粉", "name": "北安象屿金谷生化科技有限公司", "note": "", "lng": 126.572088, "lat": 48.233221}, {"material": "玉米蛋白粉", "name": "绥化象屿金谷生化科技有限公司", "note": "", "lng": 126.996575, "lat": 47.078525}, {"material": "玉米蛋白粉", "name": "辽宁益海嘉里淀粉科技有限公司", "note": "", "lng": 124.042003, "lat": 42.558448}, {"material": "玉米蛋白粉", "name": "益海嘉里（富裕）生物科技有限公司", "note": "", "lng": 124.476478, "lat": 48.467624}, {"material": "玉米蛋白粉", "name": "舟山华康生物科技有限公司", "note": "", "lng": 121.997105, "lat": 30.046024}, {"material": "玉米蛋白粉", "name": "陕西国维淀粉有限责任公司", "note": "", "lng": 109.596866, "lat": 34.930277}, {"material": "玉米蛋白粉", "name": "平凉国维淀粉有限责任公司", "note": "", "lng": 106.797379, "lat": 35.510633}, {"material": "玉米蛋白粉", "name": "中粮生化能源（龙江）有限公司", "note": "", "lng": 123.260225, "lat": 47.27677}, {"material": "玉米干全酒精糟", "name": "吉林燃料乙醇有限责任公司", "note": "", "lng": 126.4644, "lat": 43.9706}, {"material": "玉米干全酒精糟", "name": "国投生物能源（海伦）有限公司", "note": "", "lng": 126.944704, "lat": 47.466128}, {"material": "玉米干全酒精糟", "name": "双鸭山鸿展生物科技有限责任公司", "note": "", "lng": 131.141421, "lat": 46.641341}, {"material": "玉米干全酒精糟", "name": "哈尔滨鸿展生物能源有限公司", "note": "", "lng": 126.467444, "lat": 45.797462}, {"material": "玉米干全酒精糟", "name": "黑龙江鸿展生物科技股份有限公司", "note": "", "lng": 124.6145, "lat": 47.2183}, {"material": "玉米干全酒精糟", "name": "资中县银山鸿展工业有限责任公司饲料分公司", "note": "", "lng": 104.876622, "lat": 29.724761}, {"material": "玉米干全酒精糟", "name": "黑龙江省万里润达生物科技有限公司", "note": "", "lng": 132.1826, "lat": 46.3217}, {"material": "玉米干全酒精糟", "name": "国投生物能源（鸡东）有限公司", "note": "", "lng": 131.4326, "lat": 45.3241}, {"material": "玉米干全酒精糟", "name": "安徽中粮生化燃料酒精有限公司", "note": "", "lng": 117.452431, "lat": 33.276172}, {"material": "玉米干全酒精糟", "name": "中粮生化能源（肇东）有限公司", "note": "", "lng": 125.999622, "lat": 46.087962}, {"material": "玉米干全酒精糟", "name": "赤峰瑞阳化工有限公司", "note": "", "lng": 119.2179, "lat": 42.2427}, {"material": "玉米干全酒精糟", "name": "吉林生物能源（榆树）有限公司", "note": "", "lng": 126.143662, "lat": 44.796351}, {"material": "玉米干全酒精糟", "name": "广汉兴旺酒业有限责任公司", "note": "", "lng": 104.274322, "lat": 30.964417}, {"material": "玉米干全酒精糟", "name": "孟州市华兴有限责任公司", "note": "", "lng": 112.793244, "lat": 34.911426}, {"material": "玉米干全酒精糟", "name": "黑龙江中科格林生物科技有限公司", "note": "", "lng": 125.032164, "lat": 46.327241}, {"material": "玉米干全酒精糟", "name": "豫粮集团睢县农业发展有限公司", "note": "", "lng": 115.054671, "lat": 34.424317}, {"material": "玉米干全酒精糟", "name": "河南中鑫新能源发展有限公司", "note": "", "lng": 113.912452, "lat": 35.132466}, {"material": "玉米干全酒精糟", "name": "安徽中粮生化燃料酒精有限公司", "note": "", "lng": 117.452431, "lat": 33.276172}, {"material": "玉米干全酒精糟", "name": "中粮生物化学（安徽）股份有限公司", "note": "", "lng": 117.448741, "lat": 33.274425}, {"material": "玉米干全酒精糟", "name": "山东英轩实业股份有限公司", "note": "", "lng": 118.204762, "lat": 36.193483}, {"material": "玉米干全酒精糟", "name": "吉林省新天龙实业股份有限公司", "note": "", "lng": 125.763642, "lat": 43.882415}, {"material": "玉米干全酒精糟", "name": "国投生物能源（铁岭）有限公司", "note": "", "lng": 123.813426, "lat": 42.244632}, {"material": "玉米干全酒精糟", "name": "安徽安特食品股份有限公司", "note": "", "lng": 115.843274, "lat": 33.874661}];
+        var dataDK = [{"material": "玉米胚芽粕", "name": "河北旭鑫油脂有限公司", "note": "审计不合格", "lng": 115.207763, "lat": 37.983795}, {"material": "玉米胚芽粕", "name": "河北尚瑞油脂有限公司", "note": "无法通过审计", "lng": 115.426925, "lat": 38.078916}, {"material": "玉米胚芽粕", "name": "河北兴发植物油有限公司", "note": "无法通过审计", "lng": 114.632419, "lat": 37.011073}, {"material": "玉米胚芽粕", "name": "河北宏润油脂工业有限公司", "note": "审计不合格", "lng": 115.233643, "lat": 38.025137}, {"material": "玉米胚芽粕", "name": "辛集市广益油脂有限公司", "note": "无法通过审计", "lng": 115.237626, "lat": 38.096912}, {"material": "玉米胚芽粕", "name": "山东西王食品有限公司", "note": "无低毒素货源", "lng": 117.711274, "lat": 36.920386}, {"material": "玉米胚芽粕", "name": "河南金玉锋生物科技有限公司", "note": "无低毒素货源", "lng": 114.077991, "lat": 33.083875}, {"material": "玉米胚芽粕", "name": "玉锋实业集团有限公司", "note": "无低毒素货源", "lng": 114.899131, "lat": 37.634845}, {"material": "玉米胚芽粕", "name": "辽宁三星玉米产业科技有限公司", "note": "无法通过审计", "lng": 123.850008, "lat": 42.211158}, {"material": "玉米胚芽粕", "name": "铁岭盛鑫油脂有限公司", "note": "审计不合格", "lng": 123.825165, "lat": 42.233598}, {"material": "玉米胚芽粕", "name": "曲阜良友食品有限公司", "note": "无低毒素货源", "lng": 116.937901, "lat": 35.556541}, {"material": "玉米胚芽粕", "name": "肇庆焕发生物科技有限公司", "note": "货源紧张，暂不配合审计", "lng": 125.999622, "lat": 46.087962}, {"material": "玉米胚芽粕", "name": "济宁大成油脂有限公司", "note": "无法通过审计", "lng": 116.768045, "lat": 35.470418}, {"material": "玉米胚芽粕", "name": "蚌埠市江淮粮油有限公司", "note": "主要压榨米糠，少量压榨胚芽，不保毒素。", "lng": 117.586825, "lat": 33.005325}, {"material": "玉米胚芽粕", "name": "山东兴泉油脂有限公司", "note": "无低毒素货源", "lng": 118.858646, "lat": 35.168014}, {"material": "玉米胚芽粕", "name": "蚌埠市江淮粮油有限公司", "note": "米糠和胚芽交替压榨，不保毒素", "lng": 117.586825, "lat": 33.005325}, {"material": "玉米胚芽粕", "name": "济宁北企天香食品有限公司", "note": "加工能力小，间歇有低毒货源", "lng": 116.669474, "lat": 35.434621}, {"material": "玉米胚芽粕", "name": "河北德瑞淀粉有限公司", "note": "无低毒素货源", "lng": 115.181422, "lat": 37.961744}, {"material": "玉米胚芽粕", "name": "益海（周口）粮油工业有限公司", "note": "无低毒素货源", "lng": 114.720443, "lat": 33.622961}, {"material": "玉米胚芽粕", "name": "锦州元成生化科技有限公司", "note": "近年停产胚芽粕", "lng": 121.246231, "lat": 41.084212}, {"material": "玉米胚芽粕", "name": "成都红旗粮油有限公司", "note": "理性审计未通过", "lng": 104.042476, "lat": 30.634127}, {"material": "喷浆玉米胚芽粕", "name": "‌滕州福仁饲料有限公司", "note": "外购胚芽粕进行喷浆", "lng": 117.190472, "lat": 34.992644}, {"material": "喷浆玉米胚芽粕", "name": "邹平佳牧饲料有限公司", "note": "外购胚芽粕进行喷浆", "lng": 117.740142, "lat": 36.853672}, {"material": "喷浆玉米皮", "name": "内蒙古东诺生物科技有限责任公司", "note": "", "lng": 111.524164, "lat": 40.721351}, {"material": "喷浆玉米皮", "name": "东方希望包头生物工程有限公司", "note": "", "lng": 109.942254, "lat": 40.651647}, {"material": "喷浆玉米皮", "name": "通辽市德瑞玉米工业有限公司", "note": "", "lng": 122.235071, "lat": 43.444928}, {"material": "喷浆玉米皮", "name": "山东寿光巨能金玉米开发有限公司", "note": "", "lng": 118.860421, "lat": 36.877613}, {"material": "喷浆玉米皮", "name": "临清德能金玉米生物有限公司", "note": "", "lng": 115.710264, "lat": 36.842517}, {"material": "喷浆玉米皮", "name": "诸城兴贸玉米开发有限公司", "note": "", "lng": 119.386642, "lat": 35.960241}, {"material": "喷浆玉米皮", "name": "鲁洲生物科技（山东）有限公司", "note": "", "lng": 118.360643, "lat": 36.214742}, {"material": "喷浆玉米皮", "name": "鲁洲生物科技（陕西）有限公司", "note": "", "lng": 107.221642, "lat": 34.471246}, {"material": "喷浆玉米皮", "name": "鲁洲生物科技（辽宁）有限公司", "note": "", "lng": 124.161742, "lat": 42.046713}, {"material": "喷浆玉米皮", "name": "鲁洲生物科技（河南）有限公司", "note": "", "lng": 114.896421, "lat": 33.627414}, {"material": "喷浆玉米皮", "name": "山东福洋生物科技股份有限公司", "note": "", "lng": 118.066472, "lat": 36.441563}, {"material": "喷浆玉米皮", "name": "东晓生物科技股份有限公司", "note": "", "lng": 118.117423, "lat": 36.460417}, {"material": "喷浆玉米皮", "name": "保龄宝生物股份有限公司", "note": "", "lng": 118.044163, "lat": 36.446124}, {"material": "喷浆玉米皮", "name": "山东华义玉米科技有限公司", "note": "", "lng": 118.416724, "lat": 36.234412}, {"material": "喷浆玉米皮", "name": "山东香驰健源生物科技有限公司", "note": "", "lng": 118.146431, "lat": 37.171426}, {"material": "喷浆玉米皮", "name": "山东大泽成生物科技有限公司", "note": "", "lng": 118.326472, "lat": 36.192417}, {"material": "喷浆玉米皮", "name": "河北德瑞淀粉有限公司", "note": "", "lng": 115.181422, "lat": 37.961744}, {"material": "喷浆玉米皮", "name": "秦皇岛骊骅淀粉股份有限公司", "note": "", "lng": 119.184273, "lat": 39.931426}, {"material": "喷浆玉米皮", "name": "河北广玉淀粉糖业有限公司", "note": "", "lng": 115.031422, "lat": 37.613417}, {"material": "喷浆玉米皮", "name": "玉锋实业集团有限公司", "note": "", "lng": 114.899131, "lat": 37.634845}, {"material": "喷浆玉米皮", "name": "河南金玉锋生物科技有限公司", "note": "", "lng": 114.077991, "lat": 33.083875}, {"material": "喷浆玉米皮", "name": "孟州市金玉米有限责任公司", "note": "", "lng": 112.773426, "lat": 34.917413}, {"material": "喷浆玉米皮", "name": "河南金丹乳酸科技股份有限公司", "note": "", "lng": 115.224163, "lat": 33.832412}, {"material": "喷浆玉米皮", "name": "河南飞天生物科技股份有限公司", "note": "", "lng": 112.764213, "lat": 34.902416}, {"material": "喷浆玉米皮", "name": "益海嘉里（周口）生物科技有限公司", "note": "", "lng": 114.722413, "lat": 33.624127}, {"material": "喷浆玉米皮", "name": "中粮生化能源（榆树）有限公司", "note": "", "lng": 126.164782, "lat": 44.809516}, {"material": "喷浆玉米皮", "name": "中粮生化能源（肇东）有限公司", "note": "", "lng": 125.974217, "lat": 46.066437}, {"material": "喷浆玉米皮", "name": "嘉吉生化有限公司", "note": "", "lng": 124.822937, "lat": 45.092421}, {"material": "喷浆玉米皮", "name": "黑龙江龙凤玉米开发有限公司", "note": "", "lng": 125.421764, "lat": 46.586942}, {"material": "喷浆玉米皮", "name": "黑龙江昊天玉米开发有限公司", "note": "", "lng": 125.434216, "lat": 46.591423}, {"material": "喷浆玉米皮", "name": "黑龙江鹏程生化有限公司", "note": "", "lng": 125.401427, "lat": 46.574216}, {"material": "喷浆玉米皮", "name": "罗盖特（中国）营养食品有限公司", "note": "", "lng": 118.314273, "lat": 34.561426}, {"material": "喷浆玉米皮", "name": "黑龙江成福食品集团有限公司", "note": "", "lng": 125.464217, "lat": 46.621423}, {"material": "喷浆玉米皮", "name": "诸城源发生物科技有限公司", "note": "", "lng": 119.374216, "lat": 35.941427}, {"material": "喷浆玉米皮", "name": "山东天力药业有限公司", "note": "", "lng": 118.034217, "lat": 36.431426}, {"material": "喷浆玉米皮", "name": "潍坊盛泰药业有限公司", "note": "", "lng": 118.041423, "lat": 36.436412}, {"material": "喷浆玉米皮", "name": "山东恒仁工贸有限公司", "note": "", "lng": 118.342413, "lat": 36.201426}, {"material": "喷浆玉米皮", "name": "滨州金汇玉米开发有限公司", "note": "", "lng": 118.241427, "lat": 37.361423}, {"material": "喷浆玉米皮", "name": "山东西王淀粉有限责任公司", "note": "", "lng": 117.694216, "lat": 36.944213}, {"material": "喷浆玉米皮", "name": "山东福宽生物工程有限公司", "note": "", "lng": 116.974213, "lat": 36.181427}, {"material": "喷浆玉米皮", "name": "成武大地玉米开发有限公司", "note": "", "lng": 115.864216, "lat": 34.961423}, {"material": "喷浆玉米皮", "name": "德州中谷淀粉有限公司", "note": "", "lng": 116.341427, "lat": 37.241426}, {"material": "喷浆玉米皮", "name": "山西长清生物科技有限公司", "note": "", "lng": 112.741423, "lat": 36.521427}, {"material": "喷浆玉米皮", "name": "安徽金玉米农业科技开发有限公司", "note": "", "lng": 117.014216, "lat": 33.161423}, {"material": "喷浆玉米皮", "name": "安徽丰原生物技术股份有限公司", "note": "", "lng": 117.341427, "lat": 33.281426}, {"material": "喷浆玉米皮", "name": "宝鸡阜丰生物科技有限公司", "note": "", "lng": 107.204213, "lat": 34.371427}, {"material": "喷浆玉米皮", "name": "希杰（沈阳）有限公司", "note": "", "lng": 123.304216, "lat": 41.821423}, {"material": "喷浆玉米皮", "name": "锦州元成生化科技有限公司", "note": "", "lng": 121.246231, "lat": 41.084212}, {"material": "喷浆玉米皮", "name": "大成生化科技集团", "note": "", "lng": 125.334217, "lat": 43.881426}, {"material": "玉米蛋白粉", "name": "内蒙古东诺生物科技有限责任公司", "note": "", "lng": 111.524164, "lat": 40.721351}, {"material": "玉米蛋白粉", "name": "东方希望包头生物工程有限公司", "note": "", "lng": 109.942254, "lat": 40.651647}, {"material": "玉米蛋白粉", "name": "通辽市德瑞玉米工业有限公司", "note": "", "lng": 122.235071, "lat": 43.444928}, {"material": "玉米蛋白粉", "name": "山东寿光巨能金玉米开发有限公司", "note": "", "lng": 118.860421, "lat": 36.877613}, {"material": "玉米蛋白粉", "name": "临清德能金玉米生物有限公司", "note": "", "lng": 115.710264, "lat": 36.842517}, {"material": "玉米蛋白粉", "name": "诸城兴贸玉米开发有限公司", "note": "", "lng": 119.386642, "lat": 35.960241}, {"material": "玉米蛋白粉", "name": "鲁洲生物科技（山东）有限公司", "note": "", "lng": 118.360643, "lat": 36.214742}, {"material": "玉米蛋白粉", "name": "鲁洲生物科技（陕西）有限公司", "note": "", "lng": 107.221642, "lat": 34.471246}, {"material": "玉米蛋白粉", "name": "鲁洲生物科技（辽宁）有限公司", "note": "", "lng": 124.161742, "lat": 42.046713}, {"material": "玉米蛋白粉", "name": "鲁洲生物科技（河南）有限公司", "note": "", "lng": 114.896421, "lat": 33.627414}, {"material": "玉米蛋白粉", "name": "山东福洋生物科技股份有限公司", "note": "", "lng": 118.066472, "lat": 36.441563}, {"material": "玉米蛋白粉", "name": "东晓生物科技股份有限公司", "note": "", "lng": 118.117423, "lat": 36.460417}, {"material": "玉米蛋白粉", "name": "保龄宝生物股份有限公司", "note": "", "lng": 118.044163, "lat": 36.446124}, {"material": "玉米蛋白粉", "name": "山东华义玉米科技有限公司", "note": "", "lng": 118.416724, "lat": 36.234412}, {"material": "玉米蛋白粉", "name": "山东香驰健源生物科技有限公司", "note": "", "lng": 118.146431, "lat": 37.171426}, {"material": "玉米蛋白粉", "name": "山东大泽成生物科技有限公司", "note": "", "lng": 118.326472, "lat": 36.192417}, {"material": "玉米蛋白粉", "name": "河北德瑞淀粉有限公司", "note": "", "lng": 115.181422, "lat": 37.961744}, {"material": "玉米蛋白粉", "name": "秦皇岛骊骅淀粉股份有限公司", "note": "", "lng": 119.184273, "lat": 39.931426}, {"material": "玉米蛋白粉", "name": "河北广玉淀粉糖业有限公司", "note": "", "lng": 115.031422, "lat": 37.613417}, {"material": "玉米蛋白粉", "name": "玉锋实业集团有限公司", "note": "", "lng": 114.899131, "lat": 37.634845}, {"material": "玉米蛋白粉", "name": "河南金玉锋生物科技有限公司", "note": "", "lng": 114.077991, "lat": 33.083875}, {"material": "玉米蛋白粉", "name": "孟州市金玉米有限责任公司", "note": "", "lng": 112.773426, "lat": 34.917413}, {"material": "玉米蛋白粉", "name": "河南金丹乳酸科技股份有限公司", "note": "", "lng": 115.224163, "lat": 33.832412}, {"material": "玉米蛋白粉", "name": "河南飞天生物科技股份有限公司", "note": "", "lng": 112.764213, "lat": 34.902416}, {"material": "玉米蛋白粉", "name": "益海嘉里（周口）生物科技有限公司", "note": "", "lng": 114.722413, "lat": 33.624127}, {"material": "玉米蛋白粉", "name": "中粮生化能源（榆树）有限公司", "note": "", "lng": 126.164782, "lat": 44.809516}, {"material": "玉米蛋白粉", "name": "中粮生化能源（肇东）有限公司", "note": "", "lng": 125.974217, "lat": 46.066437}, {"material": "玉米蛋白粉", "name": "嘉吉生化有限公司", "note": "", "lng": 124.822937, "lat": 45.092421}, {"material": "玉米蛋白粉", "name": "黑龙江龙凤玉米开发有限公司", "note": "", "lng": 125.421764, "lat": 46.586942}, {"material": "玉米蛋白粉", "name": "黑龙江昊天玉米开发有限公司", "note": "", "lng": 125.434216, "lat": 46.591423}, {"material": "玉米蛋白粉", "name": "黑龙江鹏程生化有限公司", "note": "", "lng": 125.401427, "lat": 46.574216}, {"material": "玉米蛋白粉", "name": "罗盖特（中国）营养食品有限公司", "note": "", "lng": 118.314273, "lat": 34.561426}, {"material": "玉米蛋白粉", "name": "黑龙江成福食品集团有限公司", "note": "", "lng": 125.464217, "lat": 46.621423}, {"material": "玉米蛋白粉", "name": "诸城源发生物科技有限公司", "note": "", "lng": 119.374216, "lat": 35.941427}, {"material": "玉米蛋白粉", "name": "山东天力药业有限公司", "note": "", "lng": 118.034217, "lat": 36.431426}, {"material": "玉米蛋白粉", "name": "潍坊盛泰药业有限公司", "note": "", "lng": 118.041423, "lat": 36.436412}, {"material": "玉米蛋白粉", "name": "山东恒仁工贸有限公司", "note": "", "lng": 118.342413, "lat": 36.201426}, {"material": "玉米蛋白粉", "name": "滨州金汇玉米开发有限公司", "note": "", "lng": 118.241427, "lat": 37.361423}, {"material": "玉米蛋白粉", "name": "山东西王淀粉有限责任公司", "note": "", "lng": 117.694216, "lat": 36.944213}, {"material": "玉米蛋白粉", "name": "山东福宽生物工程有限公司", "note": "", "lng": 116.974213, "lat": 36.181427}, {"material": "玉米蛋白粉", "name": "成武大地玉米开发有限公司", "note": "", "lng": 115.864216, "lat": 34.961423}, {"material": "玉米蛋白粉", "name": "德州中谷淀粉有限公司", "note": "", "lng": 116.341427, "lat": 37.241426}, {"material": "玉米蛋白粉", "name": "山西长清生物科技有限公司", "note": "", "lng": 112.741423, "lat": 36.521427}, {"material": "玉米蛋白粉", "name": "安徽金玉米农业科技开发有限公司", "note": "", "lng": 117.014216, "lat": 33.161423}, {"material": "玉米蛋白粉", "name": "安徽丰原生物技术股份有限公司", "note": "", "lng": 117.341427, "lat": 33.281426}, {"material": "玉米蛋白粉", "name": "宝鸡阜丰生物科技有限公司", "note": "", "lng": 107.204213, "lat": 34.371427}, {"material": "玉米蛋白粉", "name": "希杰（沈阳）有限公司", "note": "", "lng": 123.304216, "lat": 41.821423}, {"material": "玉米蛋白粉", "name": "锦州元成生化科技有限公司", "note": "", "lng": 121.246231, "lat": 41.084212}, {"material": "玉米蛋白粉", "name": "大成生化科技集团", "note": "", "lng": 125.442681, "lat": 43.967253}, {"material": "玉米干全酒精糟", "name": "大庆博润生物科技有限公司", "note": "已停产多年", "lng": 125.114216, "lat": 46.601423}, {"material": "玉米干全酒精糟", "name": "内蒙古百业成酒精制造有限责任公司", "note": "审计未通过", "lng": 111.834213, "lat": 40.861427}, {"material": "玉米干全酒精糟", "name": "新疆博圣酒业酿造有限责任公司", "note": "", "lng": 86.274216, "lat": 44.871423}, {"material": "玉米干全酒精糟", "name": "孟州市厚源生物科技有限责任公司", "note": "审计未通过", "lng": 112.784213, "lat": 34.904426}, {"material": "玉米干全酒精糟", "name": "黑龙江鸿展生物能源有限公司", "note": "", "lng": 126.467444, "lat": 45.797462}, {"material": "玉米干全酒精糟", "name": "辽源市巨峰生化科技有限公司", "note": "已停产多年", "lng": 125.114217, "lat": 42.881423}, {"material": "玉米干全酒精糟", "name": "黑龙江盛龙实业有限公司", "note": "低脂", "lng": 126.624216, "lat": 45.771427}, {"material": "玉米干全酒精糟", "name": "梅河口市阜康酒精有限责任公司", "note": "低脂", "lng": 125.644213, "lat": 42.521426}, {"material": "玉米干全酒精糟", "name": "漯河天冠生物化工有限公司", "note": "", "lng": 114.064216, "lat": 33.581423}, {"material": "玉米干全酒精糟", "name": "河南汉永酒精有限公司", "note": "", "lng": 114.244213, "lat": 33.801427}, {"material": "玉米干全酒精糟", "name": "鹤岗市兴泽集团宝泉岭兴汇粮食加工有限公司", "note": "已停产多年", "lng": 130.344216, "lat": 47.471423}, {"material": "玉米干全酒精糟", "name": "孟州市润丰生物蛋白饲料有限公司", "note": "", "lng": 112.774217, "lat": 34.911426}, {"material": "玉米干全酒精糟", "name": "内蒙古顺通生物技术有限责任公司", "note": "已停产多年", "lng": 111.764213, "lat": 40.841427}, {"material": "玉米干全酒精糟", "name": "内蒙古利牛生物化工有限责任公司", "note": "已停产多年", "lng": 122.034216, "lat": 43.901423}, {"material": "玉米干全酒精糟", "name": "宿州中粮生物化学有限公司", "note": "", "lng": 116.984213, "lat": 33.641426}, {"material": "玉米干全酒精糟", "name": "吉林省博大生化有限公司", "note": "已停产多年", "lng": 125.844216, "lat": 43.821423}, {"material": "木薯干全酒精糟", "name": "山东泓达生物科技有限公司", "note": "正在申请审计", "lng": 118.606007, "lat": 35.758618}, {"material": "木薯干全酒精糟", "name": "广西中粮生物质能源有限公司", "note": "", "lng": 109.144216, "lat": 22.841423}, {"material": "木薯干全酒精糟", "name": "安徽省碧绿春生物科技有限公司", "note": "", "lng": 117.174213, "lat": 33.891426}, {"material": "木薯干全酒精糟", "name": "宿州市皖神面制品有限公司", "note": "", "lng": 116.964216, "lat": 33.621423}];
+        var dataJJ = [{"relatedJG": "嘉吉饲料(哈尔滨)有限公司", "name": "谷实生物集团股份有限公司", "note": "哈尔滨高新技术产业开发区，国家级重点龙头企业，年产销量达30万吨。", "lng": 126.501793, "lat": 45.698163}, {"relatedJG": "嘉吉饲料(哈尔滨)有限公司", "name": "黑龙江禾丰牧业有限公司", "note": "位于哈尔滨市，上市公司禾丰食品旗下企业，反刍年8万吨。", "lng": 126.717607, "lat": 45.607291}, {"relatedJG": "嘉吉饲料(哈尔滨)有限公司", "name": "哈尔滨海大饲料有限公司", "note": "位于阿城区，东三省产能最大的反刍饲料生产基地之一。", "lng": 126.958641, "lat": 45.565576}, {"relatedJG": "嘉吉饲料(哈尔滨)有限公司", "name": "黑龙江大牧人牧业有限公司", "note": "涵盖全系反刍用饲料，资金支持力度大。", "lng": 126.751676, "lat": 45.351315}, {"relatedJG": "嘉吉饲料(哈尔滨)有限公司", "name": "哈尔滨丹富仕饲料有限公司", "note": "位于道里区榆树镇，生产牛饲料，熟悉嘉吉业务。", "lng": 126.4467, "lat": 45.637642}, {"relatedJG": "嘉吉饲料(哈尔滨)有限公司", "name": "哈尔滨博瑞饲料有限公司", "note": "大客户竞争厂家，政府支持力度大", "lng": 126.430053, "lat": 45.651983}, {"relatedJG": "嘉吉饲料(哈尔滨)有限公司", "name": "齐齐哈尔大北农饲料有限公司", "note": "产能大，性价比突出。", "lng": 124.011307, "lat": 47.241143}, {"relatedJG": "嘉吉饲料(哈尔滨)有限公司", "name": "哈尔滨大北农牧业科技有限公司", "note": "产能大，性价比突出。", "lng": 127.151644, "lat": 45.785798}, {"relatedJG": "嘉吉饲料(哈尔滨)有限公司", "name": "黑龙江正大实业有限公司", "note": "产能大，质量稳定性高。", "lng": 126.578766, "lat": 45.92155}, {"relatedJG": "嘉吉饲料(哈尔滨)有限公司", "name": "科菲特饲料（齐齐哈尔）有限公司", "note": "性价比突出，以代工为主", "lng": 124.483157, "lat": 47.752165}, {"relatedJG": "嘉吉饲料(哈尔滨)有限公司", "name": "齐齐哈尔兴泰饲料有限公司", "note": "主要做网络客户，渠道广", "lng": 123.827774, "lat": 47.458193}, {"relatedJG": "嘉吉饲料(哈尔滨)有限公司", "name": "哈尔滨远大牧业有限公司", "note": "上市公司产能大，品牌力强，主做网络", "lng": 126.677097, "lat": 45.625912}, {"relatedJG": "嘉吉饲料(哈尔滨)有限公司", "name": "中粮东大(黑龙江)饲料科技有限公司", "note": "价格优势非常明显", "lng": 126.655776, "lat": 45.620219}, {"relatedJG": "嘉吉饲料(哈尔滨)有限公司", "name": "英联饲料(辽宁)有限公司哈尔滨分公司", "note": "渠道广，主做网络市场", "lng": 126.678402, "lat": 45.627047}, {"relatedJG": "嘉吉饲料(哈尔滨)有限公司", "name": "杜尔伯特牧泉元兴饲料有限责任公司", "note": "信贷周期长，价格低", "lng": 124.503629, "lat": 46.827144}, {"relatedJG": "嘉吉饲料(哈尔滨)有限公司", "name": "沈阳禾丰牧业有限公司", "note": "禾丰总部", "lng": 123.429807, "lat": 41.706781}, {"relatedJG": "嘉吉饲料(哈尔滨)有限公司", "name": "辽宁盛得大北农牧业科技有限公司", "note": "产能大，性价比突出。", "lng": 123.56773, "lat": 41.928286}, {"relatedJG": "嘉吉饲料(哈尔滨)有限公司", "name": "长春博瑞科技股份有限公司", "note": "大客户竞争厂家，政府支持力度大", "lng": 125.228007, "lat": 44.019856}, {"relatedJG": "嘉吉饲料(哈尔滨)有限公司", "name": "通辽大北农农牧科技有限公司", "note": "产能大，性价比突出。", "lng": 122.204057, "lat": 43.675517}, {"relatedJG": "嘉吉饲料(哈尔滨)有限公司", "name": "沈阳富士大通科技有限公司", "note": "主做终端散户", "lng": 123.570571, "lat": 41.943494}, {"relatedJG": "嘉吉饲料(哈尔滨)有限公司", "name": "英联饲料(辽宁)有限公司", "note": "渠道广，主做网络市场", "lng": 122.805061, "lat": 41.067207}, {"relatedJG": "嘉吉饲料(哈尔滨)有限公司", "name": "沈阳新希望六和饲料有限公司", "note": "主做终端散户", "lng": 123.21335, "lat": 41.783961}, {"relatedJG": "嘉吉饲料(哈尔滨)有限公司", "name": "山东澳亚饲料科技有限公司", "note": "预混料竞争厂家", "lng": 118.718146, "lat": 37.563351}, {"relatedJG": "嘉吉饲料(哈尔滨)有限公司", "name": "泰高营养科技(北京)有限公司", "note": "预混料竞争厂家", "lng": 116.410104, "lat": 39.967172}, {"relatedJG": "嘉吉饲料(哈尔滨)有限公司", "name": "黑龙江佰加饲料科技有限公司", "note": "预混料竞争厂家", "lng": 126.445215, "lat": 45.638338}, {"relatedJG": "嘉吉饲料(哈尔滨)有限公司", "name": "江苏健荷牧业科技有限公司", "note": "预混料竞争厂家", "lng": 119.098831, "lat": 32.222477}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "包头北辰饲料科技股份有限公司", "note": "新三板挂牌公司，主营反刍类和畜禽类饲料，产品包含猪饲料。地址在东河区铝业大道233号，旗下有包头市北辰生物等子公司。全国反刍饲料十强企业，重点生产牛、羊等反刍饲料。生产基地分布在包头市东河区、土默特右旗及巴彦淖尔市。", "lng": 110.092584, "lat": 40.575028}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "包头九州大地生物技术有限公司", "note": "北京九州大地全资子公司，生产畜禽、反刍动物浓缩料和精料补充料为主。位于稀土高新区炽盛路13号，年产能9万吨。", "lng": 109.876964, "lat": 40.629684}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "东方希望包头动物营养有限公司", "note": "东方希望集团旗下，1997年成立。位于稀土高新区青工南路16号，经营范围包括饲料生产。", "lng": 109.8757, "lat": 40.63608}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "内蒙古福正动物营养科技有限公司", "note": "生产配合饲料（畜禽、反刍等）。位于东河区南海工业开发区，注册资本1500万。前身是2002年建的福正饲料厂，专业从事牛羊反刍饲料，也生产精料补充料（反刍）。", "lng": 110.078845, "lat": 40.553197}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "内蒙古蒙哆牧饲料有限公司", "note": "2026年新成立，经营范围包括饲料生产。位于东河区，注册资本268万。", "lng": 110.031562, "lat": 40.592736}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "包头禾辰牧业有限公司", "note": "禾丰食品与北辰饲料合资，2022年成立。总投资1.2亿元，年产15万吨，产品覆盖复合预混料、浓缩料等。", "lng": 109.608044, "lat": 40.658471}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "包头市鹿丰生物技术有限公司", "note": "专业生产反刍动物浓缩饲料和精料补充料。2010年成立，年设计产能5万吨，是包头市农牧业产业化重点龙头企业。", "lng": 109.81304, "lat": 40.681319}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "内蒙古弘盛农牧业有限责任公司", "note": "持有反刍浓缩饲料、配合饲料、精料补充料的生产许可证。", "lng": 109.984721, "lat": 41.704513}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "包头市北辰生物技术有限公司", "note": "北辰饲料旗下子公司，持有添加剂预混料生产许可证。", "lng": 110.536226, "lat": 40.572651}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "包头市康牧饲料有限责任公司", "note": "位于包头市农垦集团*十三分公司，主要经营饲料生产、销售。", "lng": 110.01268, "lat": 40.54725}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "内蒙古星康牧科技集团有限公司", "note": "", "lng": 109.838875, "lat": 40.627925}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "包头市旭日饲料科技有限公司", "note": "", "lng": 109.916522, "lat": 40.583741}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "内蒙古芃川饲料有限公司", "note": "", "lng": 110.02764, "lat": 40.60712}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "包头市顺泰饲料有限责任公司", "note": "", "lng": 109.573345, "lat": 40.58217}, {"relatedJG": "嘉吉动物营养（郑州）有限公司", "name": "郑州市大北农饲料科技有限公司", "note": "位于新郑机场港区空港五路，注册资本1亿人民币，是知名上市集团大北农旗下企业。", "lng": 113.560841, "lat": 34.814377}, {"relatedJG": "嘉吉动物营养（郑州）有限公司", "name": "郑州广安生物科技股份有限公司", "note": "河南省饲料行业龙头企业，主营猪用配合饲料及预混料，生产基地在新郑市薛店镇。", "lng": 113.494512, "lat": 34.746631}, {"relatedJG": "嘉吉动物营养（郑州）有限公司", "name": "河南雄峰科技股份有限公司", "note": "位于荥阳豫龙镇，提供高端猪用营养解决方案。", "lng": 113.623684, "lat": 34.776121}, {"relatedJG": "嘉吉动物营养（郑州）有限公司", "name": "河南牧鹤（集团）饲料有限公司", "note": "在郑州经开区设厂，产品线覆盖猪用全价料。", "lng": 113.607263, "lat": 34.725176}, {"relatedJG": "嘉吉动物营养（郑州）有限公司", "name": "郑州三和饲料有限公司", "note": "总部在郑州市惠济区，拥有孟津（15万吨）和驻马店（24万吨）两个猪饲料工厂，旗下有“河南双优”6万吨反刍饲料工厂。", "lng": 113.646372, "lat": 34.74225}, {"relatedJG": "嘉吉动物营养（郑州）有限公司", "name": "郑州鑫成饲料有限公司", "note": "位于惠济区花园口镇石桥村，主要产品涵盖猪饲料、牛、羊饲料。", "lng": 113.50127, "lat": 34.79363}, {"relatedJG": "嘉吉动物营养（郑州）有限公司", "name": "郑州金惠农饲料有限公司", "note": "位于荥阳市建设路中段，产品涵盖猪系列饲料、反刍动物系列饲料。", "lng": 113.66374, "lat": 34.71268}, {"relatedJG": "嘉吉动物营养（郑州）有限公司", "name": "河南通洲生物科技有限公司", "note": "位于马寨工业区，拥有年产32万吨的饲料生产线。", "lng": 113.36742, "lat": 34.74213}, {"relatedJG": "嘉吉动物营养（郑州）有限公司", "name": "河南新联农饲料有限公司", "note": "位于南阳市社旗县（郑州周边），集高端猪饲料生产研发为一体。", "lng": 113.61275, "lat": 34.69372}, {"relatedJG": "嘉吉动物营养（郑州）有限公司", "name": "河南大陆农牧技术股份有限公司", "note": "聚焦高端猪料市场，产品覆盖生猪养殖全过程。", "lng": 113.644626, "lat": 34.748624}, {"relatedJG": "嘉吉动物营养（郑州）有限公司", "name": "河南爱普饲料集团", "note": "在河南、湖北、安徽等多省设有企业。", "lng": 113.67214, "lat": 34.70625}, {"relatedJG": "嘉吉动物营养（郑州）有限公司", "name": "河南诺尔饲料有限公司", "note": "集生猪养殖、猪料研发等为一体的企业。", "lng": 113.62743, "lat": 34.75136}, {"relatedJG": "嘉吉动物营养（郑州）有限公司", "name": "河南正本清源科技发展股份有限公司", "note": "位于商丘（郑州周边），主营母猪料、动物奶粉等。", "lng": 113.571683, "lat": 34.802741}, {"relatedJG": "嘉吉动物营养（郑州）有限公司", "name": "河南双胞胎饲料有限公司", "note": "省外知名企业在河南设立的分厂。", "lng": 113.652647, "lat": 34.727366}, {"relatedJG": "嘉吉动物营养（郑州）有限公司", "name": "河南天康宏展实业有限公司", "note": "位于郑州市郑东新区，是天康生物投资1.7亿的生产基地，专业生产反刍饲料。", "lng": 113.681742, "lat": 34.676273}, {"relatedJG": "嘉吉动物营养（郑州）有限公司", "name": "河南中荷反刍饲料有限公司", "note": "位于郑州市金水区。", "lng": 113.47253, "lat": 34.73416}, {"relatedJG": "嘉吉动物营养（郑州）有限公司", "name": "河南省反刍粗饲料技术服务有限公司", "note": "位于郑州市惠济区。", "lng": 113.63125, "lat": 34.76214}, {"relatedJG": "嘉吉动物营养（郑州）有限公司", "name": "河南玖邦饲料有限公司", "note": "经营范围包括配合饲料（反刍动物）等。", "lng": 113.60274, "lat": 34.68735}, {"relatedJG": "嘉吉动物营养（郑州）有限公司", "name": "济源市金裕饲料有限公司", "note": "位于济源（郑州周边），生产销售配合饲料（反刍）。", "lng": 112.58437, "lat": 35.08726}, {"relatedJG": "嘉吉动物营养（郑州）有限公司", "name": "济源市捷恩斯饲料有限公司", "note": "位于济源（郑州周边），生产配合饲料（反刍动物）。", "lng": 112.60153, "lat": 35.06472}, {"relatedJG": "嘉吉动物营养（郑州）有限公司", "name": "永城市双沣饲料有限公司", "note": "位于商丘永城（郑州周边），加工销售配合饲料（反刍）。", "lng": 116.43276, "lat": 33.92654}, {"relatedJG": "嘉吉动物营养（郑州）有限公司", "name": "滑县光明牧业饲料有限公司", "note": "位于安阳滑县（郑州周边），核心产品为反刍饲料。", "lng": 114.55723, "lat": 35.58176}, {"relatedJG": "嘉吉动物营养（郑州）有限公司", "name": "修武县伊赛饲料有限公司", "note": "位于焦作修武（郑州周边）。", "lng": 113.42762, "lat": 35.23647}, {"relatedJG": "嘉吉动物营养（郑州）有限公司", "name": "郑州绿赛农牧业有限公司", "note": "", "lng": 113.52647, "lat": 34.76235}, {"relatedJG": "嘉吉动物营养（郑州）有限公司", "name": "河南启明饲料有限公司", "note": "", "lng": 113.65372, "lat": 34.73412}, {"relatedJG": "嘉吉动物营养（郑州）有限公司", "name": "河南臻美农牧科技有限公司", "note": "", "lng": 113.60472, "lat": 34.71634}, {"relatedJG": "嘉吉动物营养（郑州）有限公司", "name": "河南联合英伟饲料有限公司", "note": "", "lng": 113.67421, "lat": 34.69273}, {"relatedJG": "嘉吉动物营养（郑州）有限公司", "name": "河南亿万中原饲料有限公司", "note": "位于郑州市荥阳市", "lng": 113.58367, "lat": 34.77325}, {"relatedJG": "嘉吉动物营养（郑州）有限公司", "name": "郑州六品饲料有限公司", "note": "", "lng": 113.54273, "lat": 34.78642}, {"relatedJG": "嘉吉动物营养（郑州）有限公司", "name": "河南六和饲料有限公司郑州分公司", "note": "", "lng": 113.632471, "lat": 34.756822}, {"relatedJG": "嘉吉动物营养（郑州）有限公司", "name": "河南海大九州生物科技有限公司", "note": "位于驻马店市汝南县,有反刍.", "lng": 116.536698, "lat": 39.802656}, {"relatedJG": "嘉吉动物营养（郑州）有限公司", "name": "英联饲料(上海)有限公司驻马店厂", "note": "位于驻马店市遂平县希望大道,主要做猪料", "lng": 114.022727, "lat": 33.161942}, {"relatedJG": "嘉吉动物营养（郑州）有限公司", "name": "英联饲料有限公司新乡工厂", "note": "位于新乡市获嘉县,主要做反刍饲料.", "lng": 113.717356, "lat": 35.269448}, {"relatedJG": "嘉吉动物营养（郑州）有限公司", "name": "焦作禾丰饲料有限公司", "note": "焦作市沁阳市,有反刍饲料.", "lng": 112.836845, "lat": 35.03174}, {"relatedJG": "嘉吉动物营养（郑州）有限公司", "name": "新农(郑州)饲料有限公司", "note": "郑州市中原区红叶路11号,主要做小猪料", "lng": 113.525608, "lat": 34.799454}, {"relatedJG": "嘉吉动物营养（郑州）有限公司", "name": "河南邦农饲料有限公司", "note": "郑州市荥阳市豫龙镇建设路与荥泽大道交叉口,主要做猪料", "lng": 113.423828, "lat": 34.801399}, {"relatedJG": "嘉吉动物营养（郑州）有限公司", "name": "河南大德农牧科技有限公司", "note": "郑州市信阳市,主要做水产料.", "lng": 113.420757, "lat": 34.800269}, {"relatedJG": "烟台农标普瑞纳饲料有限公司", "name": "烟台大信饲料有限公司", "note": "位于海阳市发城镇，主营配合饲料、浓缩饲料（畜禽）。", "lng": 121.124632, "lat": 37.463721}, {"relatedJG": "烟台农标普瑞纳饲料有限公司", "name": "山东天源饲料（集团）有限公司", "note": "总部位于烟台龙口，集饲料生产、种禽孵化、种猪繁育于一体。", "lng": 121.172536, "lat": 37.402642}, {"relatedJG": "烟台农标普瑞纳饲料有限公司", "name": "山东瑞禾源农牧科技有限公司", "note": "旗下拥有栖霞、莱阳等多家子公司，是专业猪料公司。", "lng": 120.77364, "lat": 37.47253}, {"relatedJG": "烟台农标普瑞纳饲料有限公司", "name": "莱阳海合农牧科技有限公司", "note": "位于莱阳市山前店镇，广东海大集团全资子公司，生产畜禽配合饲料、浓缩饲料。", "lng": 120.734263, "lat": 36.976274}, {"relatedJG": "烟台农标普瑞纳饲料有限公司", "name": "海阳新希望六和饲料有限公司", "note": "位于烟台海阳市。", "lng": 121.163742, "lat": 36.782631}, {"relatedJG": "烟台农标普瑞纳饲料有限公司", "name": "莱阳环山饲料有限公司", "note": "位于莱阳市柏林庄街道办事处。", "lng": 120.714264, "lat": 36.964732}, {"relatedJG": "烟台农标普瑞纳饲料有限公司", "name": "烟台龙大饲料有限公司", "note": "位于莱阳市龙旺庄街道办事处。", "lng": 120.682743, "lat": 36.832647}, {"relatedJG": "烟台农标普瑞纳饲料有限公司", "name": "莱阳和美华饲料有限公司", "note": "位于莱阳市经济开发区。", "lng": 120.74263, "lat": 36.98372}, {"relatedJG": "烟台农标普瑞纳饲料有限公司", "name": "烟台强大饲料有限责任公司", "note": "位于栖霞市桃村镇。", "lng": 121.07364, "lat": 37.44253}, {"relatedJG": "烟台农标普瑞纳饲料有限公司", "name": "烟台君诺生物科技有限公司", "note": "位于海阳市行村镇，生产范围明确包含精料补充料（反刍） 及浓缩饲料（反刍）。", "lng": 121.14273, "lat": 37.41625}, {"relatedJG": "烟台农标普瑞纳饲料有限公司", "name": "烟台海岳饲料有限公司", "note": "位于海阳市朱吴镇，产品包含精料补充料（反刍）。", "lng": 120.76352, "lat": 36.94263}, {"relatedJG": "烟台农标普瑞纳饲料有限公司", "name": "烟台康惠饲料有限公司", "note": "集团化公司，旗下德州康惠为专业反刍动物饲料企业。", "lng": 121.04263, "lat": 37.37254}, {"relatedJG": "烟台农标普瑞纳饲料有限公司", "name": "山东奕和饲料有限公司", "note": "位于海阳市行村工业园，经营范围包括精料补充料（反刍）。", "lng": 120.70253, "lat": 36.92463}, {"relatedJG": "烟台农标普瑞纳饲料有限公司", "name": "山东慧丰源农牧发展有限公司", "note": "位于莱阳市吕格庄工业园，生产添加剂预混合饲料（反刍动物）。", "lng": 121.11263, "lat": 37.42536}, {"relatedJG": "烟台农标普瑞纳饲料有限公司", "name": "海阳丰沃新农饲料有限公司", "note": "位于烟台海阳市，是山东丰沃新农的全资子公司，在潍坊也有工厂，有大北农背景", "lng": 120.977715, "lat": 36.785503}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "武汉正大有限公司", "note": "位于新洲区阳逻经济开发区，年产24万吨畜禽饲料及6万吨预混料，产品含猪饲料。", "lng": 114.316427, "lat": 30.474153}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "武汉大北农农牧发展有限公司", "note": "位于汉南区，注册资本8000万，国家高新技术企业，主营猪饲料等。", "lng": 114.276342, "lat": 30.526371}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "康地饲料（中国）有限公司", "note": "位于东西湖区，年产10万吨预混料和5万吨乳猪料。", "lng": 114.246731, "lat": 30.582642}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "武汉安佑饲料科技有限公司", "note": "位于江夏区，安佑集团旗下，主营猪饲料。", "lng": 114.437263, "lat": 30.427361}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "武汉家家乐饲料股份有限公司", "note": "位于江夏区，专为规模化猪场研发生产猪饲料。", "lng": 114.302746, "lat": 30.463724}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "武汉通威饲料有限公司", "note": "位于东西湖区，通威股份旗下，经营配合饲料等。", "lng": 114.364721, "lat": 30.416273}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "武汉湘大饲料有限公司", "note": "位于东西湖区。", "lng": 114.226372, "lat": 30.563721}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "武汉双胞胎星弘饲料有限公司", "note": "位于江夏区。", "lng": 114.293641, "lat": 30.482736}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "武汉国雄饲料科技有限公司", "note": "位于武汉市。", "lng": 114.237462, "lat": 30.572634}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "武汉龙科信有限公司", "note": "集饲料生产、加工、养殖于一体，产品涵盖猪饲料。", "lng": 114.32637, "lat": 30.45263}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "武汉新农泰饲料有限公司", "note": "位于蔡甸区，年产配合饲料12万吨。", "lng": 114.25364, "lat": 30.54273}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "武汉华龙饲料有限公司", "note": "位于汉川马口镇，年产十万吨级。", "lng": 114.21637, "lat": 30.55364}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "武汉正达饲料有限公司", "note": "位于蔡甸区，经营范围包括饲料生产。", "lng": 114.34263, "lat": 30.43273}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "武汉金山饲料有限公司", "note": "位于汉川市，生产配合饲料、浓缩饲料。", "lng": 114.19364, "lat": 30.52736}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "武汉市德润和饲料有限公司", "note": "", "lng": 114.27364, "lat": 30.50263}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "武汉鑫旺饲料科技有限公司", "note": "", "lng": 114.24637, "lat": 30.53274}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "武汉新农翔饲料有限公司", "note": "", "lng": 114.31263, "lat": 30.46732}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "中牧实业武汉华罗分公司", "note": "位于东湖高新区，产品涵盖反刍等多个系列。", "lng": 114.232641, "lat": 30.567322}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "武汉汇森科技有限公司", "note": "研发推出反刍动物系列预混料等。", "lng": 114.26372, "lat": 30.51263}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "武汉融信和饲料有限公司", "note": "位于东西湖区，经营范围包含配合饲料等。", "lng": 114.33263, "lat": 30.44732}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "武汉新宏玑生物科技有限公司", "note": "", "lng": 114.28364, "lat": 30.49263}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "惠特奇（武汉）生物科技有限公司", "note": "", "lng": 114.22374, "lat": 30.54732}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "武汉华牧科技集团股份有限公司", "note": "产品涉及猪用、禽用等。", "lng": 114.353642, "lat": 30.426371}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "武汉艾立美饲料科技有限公司", "note": "武汉本地饲料科技企业。", "lng": 114.25637, "lat": 30.52364}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "湖北信海生物饲料有限公司", "note": "位于汉阳区，经营范围包括饲料生产。", "lng": 114.17263, "lat": 30.51372}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "湖北海大饲料有限公司", "note": "位于东西湖区。", "lng": 114.372634, "lat": 30.407362}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "武汉正大水产有限公司", "note": "", "lng": 114.382741, "lat": 30.396273}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "武汉今源生物科技有限公司", "note": "位于江夏区。", "lng": 114.29364, "lat": 30.47263}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "武汉万年青畜牧有限公司", "note": "拥有年产8万吨饲料加工厂。", "lng": 114.18364, "lat": 30.50273}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "武汉金华农生物科技有限公司", "note": "业务涉及生猪、牛羊反刍养殖等领域。", "lng": 114.24372, "lat": 30.55263}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "武汉中海粮油工业有限公司", "note": "", "lng": 114.392633, "lat": 30.387364}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "湖北九星饲料有限公司", "note": "位于黄陂区，经营猪饲料等。", "lng": 114.16372, "lat": 30.49263}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "湖北海达尔饲料有限公司", "note": "武汉本地饲料企业。", "lng": 114.20364, "lat": 30.53273}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "湖北金德戈饲料有限公司", "note": "位于东西湖区。", "lng": 114.26372, "lat": 30.51732}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "武汉天龙饲料有限公司", "note": "列入2024年农业产业化市级重点龙头企业名单。", "lng": 114.30263, "lat": 30.45732}, {"relatedJG": "嘉吉动物营养（昆明）有限公司", "name": "云南大北农饲料科技有限公司", "note": "位于昆明市宜良县工业园区，年产量达24万吨，是云南省内领先的现代化高档猪料生产基地。", "lng": 102.742631, "lat": 25.063724}, {"relatedJG": "嘉吉动物营养（昆明）有限公司", "name": "昆明新希望动物营养食品有限公司", "note": "新希望六和全资子公司，位于宜良县北古城镇工业园区，年生产能力40余万吨，拥有独立的猪料专用生产线、反刍料专用生产线。", "lng": 102.713642, "lat": 25.042633}, {"relatedJG": "嘉吉动物营养（昆明）有限公司", "name": "云南大台农台标农业科技有限公司", "note": "位于宜良县工业园区，隶属广州大台农集团，注册资本8000万元。专注乳猪教槽料、保育料及母猪料生产。", "lng": 102.773641, "lat": 25.082732}, {"relatedJG": "嘉吉动物营养（昆明）有限公司", "name": "昆明滇农饲料有限公司", "note": "位于宜良县北古城饲料工业园，国家高新技术企业，注册资本2000万元。2022年营业收入达1.92亿元。", "lng": 102.73263, "lat": 25.05263}, {"relatedJG": "嘉吉动物营养（昆明）有限公司", "name": "昆明云中美农牧科技有限公司", "note": "位于宜良县北古城镇工业园区，大北农集团旗下企业，注册资本5000万元。", "lng": 102.75364, "lat": 25.07263}, {"relatedJG": "嘉吉动物营养（昆明）有限公司", "name": "昆明丰庆饲料有限公司", "note": "位于官渡区大板桥镇工业园区，云南饲料工业骨干企业。", "lng": 102.70364, "lat": 25.03273}, {"relatedJG": "嘉吉动物营养（昆明）有限公司", "name": "昆明三农农牧有限公司", "note": "位于官渡区大板桥镇，昆明市农业产业化重点龙头企业，拥有年产1.2万吨猪用饲料的生产能力。", "lng": 102.76372, "lat": 25.06732}, {"relatedJG": "嘉吉动物营养（昆明）有限公司", "name": "云南远方饲料有限公司", "note": "位于昆明市，注册资本500万人民币。", "lng": 102.72364, "lat": 25.04732}, {"relatedJG": "嘉吉动物营养（昆明）有限公司", "name": "昆明倍特饲料有限公司", "note": "位于官渡区，从事猪、禽、鱼、牛、羊饲料的开发与生产。", "lng": 102.78364, "lat": 25.09263}, {"relatedJG": "嘉吉动物营养（昆明）有限公司", "name": "昆明特驱饲料有限公司", "note": "位于宜良县北古城镇饲料工业园区，经营范围明确包含反刍料开发、销售。", "lng": 102.746371, "lat": 25.067322}, {"relatedJG": "嘉吉动物营养（昆明）有限公司", "name": "云南滇大饲料有限公司", "note": "位于宜良县北古城镇饲料工业园区，主营产品包含反刍饲料，具有精料补充料（反刍动物）的生产资质。", "lng": 102.68364, "lat": 25.01273}, {"relatedJG": "嘉吉动物营养（昆明）有限公司", "name": "云南禾丰反刍饲料有限公司", "note": "位于滇中新区大板桥街道，成立于2024年，专注于反刍饲料领域。", "lng": 102.71637, "lat": 25.03726}, {"relatedJG": "嘉吉动物营养（昆明）有限公司", "name": "云南龙谷生物科技有限公司", "note": "位于空港经济区大板桥工业园区，持有浓缩饲料(反刍)和精料补充料(反刍) 的生产许可。", "lng": 102.77637, "lat": 25.08732}, {"relatedJG": "嘉吉动物营养（昆明）有限公司", "name": "云南中刍生物科技有限责任公司", "note": "位于昆明市，专注于反刍动物领域。", "lng": 103.34263, "lat": 24.77263}, {"relatedJG": "嘉吉动物营养（昆明）有限公司", "name": "石林牧欣特反刍科技有限公司", "note": "位于石林彝族自治县，成立于2023年。", "lng": 103.36372, "lat": 24.79263}, {"relatedJG": "嘉吉动物营养（昆明）有限公司", "name": "云南神农集团", "note": "云南本土大型农牧企业，在昆明及周边（如大理、澄江）设有多个饲料厂。", "lng": 102.726373, "lat": 25.046274}, {"relatedJG": "嘉吉动物营养（昆明）有限公司", "name": "云南大成通邦农牧发展有限责任公司", "note": "大成集团子公司，产品涵盖家禽、猪、反刍等多种动物饲料。", "lng": 102.75364, "lat": 25.06273}, {"relatedJG": "嘉吉动物营养（昆明）有限公司", "name": "昆明铁骑力士饲料有限公司", "note": "位于昆明市嵩明县。", "lng": 102.736422, "lat": 25.056371}, {"relatedJG": "嘉吉饲料（南宁）有限公司", "name": "南宁武鸣漓源粮油饲料有限公司", "note": "主营：配合饲料、浓缩饲料（猪、禽料）", "lng": 108.284632, "lat": 23.076421}, {"relatedJG": "嘉吉饲料（南宁）有限公司", "name": "南宁市武鸣区海大生物科技有限公司", "note": "主营：畜禽生物配合饲料", "lng": 108.28667, "lat": 23.076704}, {"relatedJG": "嘉吉饲料（南宁）有限公司", "name": "南宁湘大骆驼饲料有限公司", "note": "主营：猪、禽配合饲料", "lng": 108.282147, "lat": 23.079336}, {"relatedJG": "嘉吉饲料（南宁）有限公司", "name": "南宁大北农饲料科技有限责任公司", "note": "主营：猪配合料、预混料", "lng": 108.272054, "lat": 23.166385}, {"relatedJG": "嘉吉动物营养饲料（济宁）有限公司", "name": "临沂海鼎反刍生物饲料有限公司", "note": "各类反刍浓缩料、预混料及配合料", "lng": 118.406722, "lat": 35.024631}, {"relatedJG": "嘉吉动物营养饲料（济宁）有限公司", "name": "烟台丹富仕饲料有限公司", "note": "", "lng": 121.184062, "lat": 36.712054}, {"relatedJG": "嘉吉动物营养饲料（济宁）有限公司", "name": "日照丹富仕饲料有限公司", "note": "", "lng": 119.500762, "lat": 35.481495}, {"relatedJG": "嘉吉动物营养饲料（济宁）有限公司", "name": "丹富仕（德州）饲料有限公司", "note": "", "lng": 116.021075, "lat": 37.112563}, {"relatedJG": "嘉吉动物营养饲料（济宁）有限公司", "name": "济南大北农反刍牧业科技有限公司", "note": "", "lng": 117.823627, "lat": 36.150741}, {"relatedJG": "嘉吉动物营养饲料（济宁）有限公司", "name": "山东和美华集团有限公司", "note": "", "lng": 117.413045, "lat": 36.674124}, {"relatedJG": "嘉吉动物营养饲料（济宁）有限公司", "name": "临沂中慧饲料有限公司", "note": "", "lng": 118.331607, "lat": 35.061082}, {"relatedJG": "嘉吉动物营养饲料（济宁）有限公司", "name": "山东牧泉元兴生物科技有限责任公司", "note": "", "lng": 117.095066, "lat": 36.692436}, {"relatedJG": "嘉吉动物营养饲料（济宁）有限公司", "name": "山东澳亚饲料科技有限公司", "note": "", "lng": 117.521442, "lat": 36.704125}, {"relatedJG": "嘉吉动物营养饲料（济宁）有限公司", "name": "帝斯曼维生素（山东）有限公司", "note": "", "lng": 117.624013, "lat": 36.730542}, {"relatedJG": "嘉吉动物营养饲料（济宁）有限公司", "name": "烟台康慧饲料有限公司", "note": "", "lng": 120.982051, "lat": 36.806337}, {"relatedJG": "嘉吉动物营养饲料（济宁）有限公司", "name": "希杰（聊城）饲料有限公司", "note": "", "lng": 115.994203, "lat": 36.437416}, {"relatedJG": "嘉吉动物营养饲料（济宁）有限公司", "name": "希杰（青岛）饲料有限公司", "note": "", "lng": 120.130477, "lat": 36.342745}, {"relatedJG": "嘉吉动物营养饲料（济宁）有限公司", "name": "中慧农牧股份有限公司", "note": "", "lng": 118.327566, "lat": 35.064213}, {"relatedJG": "嘉吉动物营养饲料（济宁）有限公司", "name": "聊城中慧饲料有限公司", "note": "", "lng": 115.932047, "lat": 36.452106}, {"relatedJG": "嘉吉动物营养饲料（济宁）有限公司", "name": "德州中慧饲料有限公司", "note": "", "lng": 116.341271, "lat": 37.451364}, {"relatedJG": "嘉吉饲料（南平）有限公司", "name": "福州大福有限公司", "note": "", "lng": 119.324623, "lat": 26.135047}, {"relatedJG": "嘉吉饲料（南平）有限公司", "name": "江山大北农农牧科技有限公司", "note": "", "lng": 118.617024, "lat": 28.743105}, {"relatedJG": "嘉吉饲料（南平）有限公司", "name": "屏南双胞胎饲料有限公司", "note": "", "lng": 118.994362, "lat": 26.917234}, {"relatedJG": "嘉吉饲料（南平）有限公司", "name": "三明傲农生物科技有限公司", "note": "", "lng": 117.723145, "lat": 26.241632}, {"relatedJG": "嘉吉饲料（南平）有限公司", "name": "福建兴顺饲料有限公司", "note": "", "lng": 117.364126, "lat": 26.084722}, {"relatedJG": "嘉吉饲料（南平）有限公司", "name": "三明海大饲料有限公司", "note": "", "lng": 117.687304, "lat": 26.267134}, {"relatedJG": "嘉吉饲料（南平）有限公司", "name": "福州海大饲料有限公司", "note": "", "lng": 119.467231, "lat": 26.074156}, {"relatedJG": "嘉吉饲料（南平）有限公司", "name": "三明大北农牧科技有限公司", "note": "", "lng": 117.693206, "lat": 26.253741}, {"relatedJG": "嘉吉饲料（南平）有限公司", "name": "南平华农恒青农牧有限公司", "note": "", "lng": 118.162744, "lat": 26.632017}, {"relatedJG": "嘉吉饲料（南平）有限公司", "name": "永安鑫华港饲料有限公司", "note": "", "lng": 117.360541, "lat": 25.967246}, {"relatedJG": "农标普瑞纳（廊坊）饲料有限公司", "name": "邢台海大生物科技有限公司", "note": "", "lng": 114.487632, "lat": 37.073145}, {"relatedJG": "农标普瑞纳（廊坊）饲料有限公司", "name": "天津大北农生物科技有限公司", "note": "", "lng": 117.354216, "lat": 39.687023}, {"relatedJG": "农标普瑞纳（廊坊）饲料有限公司", "name": "南皮大北农饲料科技有限公司", "note": "", "lng": 116.692734, "lat": 38.024671}, {"relatedJG": "农标普瑞纳（廊坊）饲料有限公司", "name": "北京科高大北农生物科技有限公司", "note": "", "lng": 116.713624, "lat": 40.106357}, {"relatedJG": "嘉吉饲料（陕西）有限公司", "name": "陕西石羊农业科技股份有限公司", "note": "", "lng": 108.924014, "lat": 34.382305}, {"relatedJG": "嘉吉饲料（陕西）有限公司", "name": "西安铁骑力士饲料有限公司", "note": "", "lng": 109.282134, "lat": 34.425572}, {"relatedJG": "嘉吉饲料（陕西）有限公司", "name": "西安禾丰饲料科技有限公司", "note": "", "lng": 109.259803, "lat": 34.412832}, {"relatedJG": "嘉吉饲料（陕西）有限公司", "name": "陕西安佑生物科技有限公司", "note": "", "lng": 108.112333, "lat": 34.249851}, {"relatedJG": "嘉吉饲料（陕西）有限公司", "name": "陕西正大有限公司", "note": "", "lng": 108.959383, "lat": 34.593753}, {"relatedJG": "嘉吉饲料（陕西）有限公司", "name": "陕西正能农牧科技有限责任公司", "note": "", "lng": 109.024075, "lat": 34.474725}, {"relatedJG": "嘉吉饲料（陕西）有限公司", "name": "陕西康达尔农牧科技有限公司", "note": "", "lng": 109.099006, "lat": 34.544465}, {"relatedJG": "嘉吉饲料（陕西）有限公司", "name": "萨诺（西安）公司", "note": "", "lng": 108.926875, "lat": 34.234525}, {"relatedJG": "嘉吉饲料（陕西）有限公司", "name": "陕西湘大骆驼饲料有限公司", "note": "", "lng": 108.074436, "lat": 34.262042}, {"relatedJG": "嘉吉饲料（陕西）有限公司", "name": "杨凌海大饲料有限公司", "note": "", "lng": 108.090724, "lat": 34.268817}, {"relatedJG": "嘉吉饲料（陕西）有限公司", "name": "杨凌东方希望动物营养有限公司", "note": "", "lng": 108.091462, "lat": 34.270135}, {"relatedJG": "嘉吉饲料（陕西）有限公司", "name": "杨凌禾丰农牧有限公司", "note": "", "lng": 108.073954, "lat": 34.261683}, {"relatedJG": "嘉吉饲料（陕西）有限公司", "name": "宝鸡新希望农牧有限公司", "note": "", "lng": 107.860421, "lat": 34.220746}, {"relatedJG": "嘉吉饲料（陕西）有限公司", "name": "宝鸡海大农牧有限公司", "note": "", "lng": 107.858963, "lat": 34.221852}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "包头北辰饲料科技股份有限公司", "note": "新三板挂牌公司，主营反刍类和畜禽类饲料，产品包含猪饲料。地址在东河区铝业大道233号，旗下有包头市北辰生物等子公司。全国反刍饲料十强企业，重点生产牛、羊等反刍饲料。生产基地分布在包头市东河区、土默特右旗及巴彦淖尔市。", "lng": 110.092584, "lat": 40.575028}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "包头九州大地生物技术有限公司", "note": "北京九州大地全资子公司，生产畜禽、反刍动物浓缩料和精料补充料为主。位于稀土高新区炽盛路13号，年产能9万吨。", "lng": 109.876964, "lat": 40.629684}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "东方希望包头动物营养有限公司", "note": "东方希望集团旗下，1997年成立。位于稀土高新区青工南路16号，经营范围包括饲料生产。", "lng": 109.8757, "lat": 40.63608}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "内蒙古福正动物营养科技有限公司", "note": "生产配合饲料（畜禽、反刍等）。位于东河区南海工业开发区，注册资本1500万。前身是2002年建的福正饲料厂，专业从事牛羊反刍饲料，也生产精料补充料（反刍）。", "lng": 110.078845, "lat": 40.553197}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "内蒙古蒙哆牧饲料有限公司", "note": "2026年新成立，经营范围包括饲料生产。位于东河区，注册资本268万。", "lng": 110.031562, "lat": 40.592736}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "包头禾辰牧业有限公司", "note": "禾丰食品与北辰饲料合资，2022年成立。总投资1.2亿元，年产15万吨，产品覆盖复合预混料、浓缩料等。", "lng": 109.608044, "lat": 40.658471}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "包头市鹿丰生物技术有限公司", "note": "专业生产反刍动物浓缩饲料和精料补充料。2010年成立，年设计产能5万吨，是包头市农牧业产业化重点龙头企业。", "lng": 109.81304, "lat": 40.681319}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "内蒙古弘盛农牧业有限责任公司", "note": "持有反刍浓缩饲料、配合饲料、精料补充料的生产许可证。", "lng": 109.984721, "lat": 41.704513}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "包头市北辰生物技术有限公司", "note": "北辰饲料旗下子公司，持有添加剂预混料生产许可证。", "lng": 110.536226, "lat": 40.572651}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "包头市康牧饲料有限责任公司", "note": "位于包头市农垦集团*十三分公司，主要经营饲料生产、销售。", "lng": 110.01268, "lat": 40.54725}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "内蒙古星康牧科技集团有限公司", "note": "", "lng": 109.838875, "lat": 40.627925}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "包头市旭日饲料科技有限公司", "note": "", "lng": 109.916522, "lat": 40.583741}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "内蒙古芃川饲料有限公司", "note": "", "lng": 110.02764, "lat": 40.60712}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "包头市顺泰饲料有限责任公司", "note": "", "lng": 109.573345, "lat": 40.58217}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "内蒙古牧泉元兴饲料有限责任公司", "note": "奶牛/浓缩", "lng": 111.848095, "lat": 40.863548}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "中粮饲料（呼和浩特）有限公司", "note": "奶牛/全价", "lng": 111.793628, "lat": 40.467838}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "内蒙古大北农饲料科技有限责任公司", "note": "奶牛/浓缩", "lng": 116.644592, "lat": 40.202076}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "内蒙古正大有限公司", "note": "浓缩/猪牛羊禽鱼", "lng": 111.802917, "lat": 40.861526}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "内蒙古新正邦饲料有限公司", "note": "猪/牛/羊/禽", "lng": 116.374865, "lat": 40.17176}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "内蒙古富川饲料科技股份有限公司", "note": "猪/羊/牛", "lng": 107.502275, "lat": 40.826099}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "北京大北农科技集团股份有限公司", "note": "猪/浓缩", "lng": 116.696248, "lat": 40.368249}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "正大饲料（和林）有限公司", "note": "猪", "lng": 111.777552, "lat": 40.488939}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "天康生物股份有限公司", "note": "猪", "lng": 87.594693, "lat": 43.935215}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "陕西绿赛牧业科技有限公司", "note": "预混料", "lng": 109.035587, "lat": 34.4968}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "萨诺（杨凌）现代动物营养有限公司", "note": "预混料", "lng": 108.113266, "lat": 34.241979}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "内蒙古博瑞饲料有限公司", "note": "奶牛", "lng": 111.800032, "lat": 40.486353}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "包头市蒙川诺饲料有限责任公司", "note": "肉牛/反刍", "lng": 109.585829, "lat": 40.597302}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "内蒙古海大饲料有限公司", "note": "肉牛/反刍", "lng": 111.802917, "lat": 40.861526}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "巴彦淖尔市北辰饲料科技有限公司", "note": "肉牛/反刍", "lng": 108.63695, "lat": 40.722776}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "巴彦淖尔市大北农农牧科技有限公司", "note": "肉牛/反刍", "lng": 107.56666, "lat": 40.873097}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "巴彦淖尔市飞虹饲料有限公司", "note": "肉牛/反刍", "lng": 107.43301, "lat": 40.850278}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "巴彦淖尔市科河饲料有限责任公司", "note": "肉牛/反刍", "lng": 107.514775, "lat": 40.818425}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "五原正大有限公司", "note": "肉牛/反刍", "lng": 108.29149, "lat": 41.052007}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "内蒙古金标农牧业有限公司", "note": "肉牛/反刍", "lng": 111.809372, "lat": 40.664701}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "内蒙古蒙锐牧兴饲料有限公司", "note": "肉牛/反刍", "lng": 111.295303, "lat": 40.738873}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "内蒙古蒙泰大地生物技术有限公司", "note": "肉牛/反刍", "lng": 111.804448, "lat": 40.474139}, {"relatedJG": "嘉吉饲料（内蒙古）有限公司", "name": "内蒙古草原艺蓉科技有限责任公司", "note": "肉牛/反刍", "lng": 111.873932, "lat": 40.850983}, {"relatedJG": "嘉吉饲料（漳州）有限公司", "name": "漳州海大饲料有限公司", "note": "", "lng": 117.896908, "lat": 24.366426}, {"relatedJG": "嘉吉饲料（漳州）有限公司", "name": "漳州大北农农牧科技有限公司", "note": "", "lng": 117.595722, "lat": 24.570402}, {"relatedJG": "嘉吉饲料（漳州）有限公司", "name": "福建傲农生物科技集团有限公司", "note": "", "lng": 119.552748, "lat": 26.230021}, {"relatedJG": "嘉吉饲料（漳州）有限公司", "name": "漳州安佑饲料有限公司", "note": "", "lng": 117.518306, "lat": 24.593451}, {"relatedJG": "嘉吉饲料（漳州）有限公司", "name": "福建省海新集团有限公司", "note": "", "lng": 117.879836, "lat": 24.395238}, {"relatedJG": "嘉吉饲料（漳州）有限公司", "name": "厦门正大农牧有限公司", "note": "", "lng": 118.129735, "lat": 24.521745}, {"relatedJG": "嘉吉饲料(佛山)有限公司", "name": "广州大北农农牧科技有限责任公司", "note": "广东省广州市增城朱村街朱村大道中491号（厂房A1、A2）", "lng": 113.729484, "lat": 23.273112}, {"relatedJG": "嘉吉饲料(佛山)有限公司", "name": "正大康地阳江饲料有限公司", "note": "广东省阳江市高新区产业转移工业园科技四路6号", "lng": 111.895155, "lat": 21.808836}, {"relatedJG": "嘉吉饲料(佛山)有限公司", "name": "广州市海大饲料有限公司（番禺）", "note": "广东省广州市番禺区海大工业园", "lng": 113.258181, "lat": 22.967088}, {"relatedJG": "嘉吉饲料(佛山)有限公司", "name": "阳江漓源饲料有限公司", "note": "广东省阳江市江城区银岭科技产业园A4-1-2号", "lng": 111.870594, "lat": 21.894149}, {"relatedJG": "嘉吉饲料（阳江）有限公司", "name": "广州大北农农牧科技有限责任公司", "note": "广东省广州市增城朱村街朱村大道中491号（厂房A1、A2）", "lng": 113.729484, "lat": 23.273112}, {"relatedJG": "嘉吉饲料（阳江）有限公司", "name": "正大康地阳江饲料有限公司", "note": "广东省阳江市高新区产业转移工业园科技四路6号", "lng": 111.895155, "lat": 21.808836}, {"relatedJG": "嘉吉饲料（阳江）有限公司", "name": "广州市海大饲料有限公司（番禺）", "note": "广东省广州市番禺区海大工业园", "lng": 113.258181, "lat": 22.967088}, {"relatedJG": "嘉吉饲料（阳江）有限公司", "name": "阳江漓源饲料有限公司", "note": "广东省阳江市江城区银岭科技产业园A4-1-2号", "lng": 111.870594, "lat": 21.894149}, {"relatedJG": "嘉吉动物营养（昆明）有限公司", "name": "云南双胞胎饲料有限公司", "note": "", "lng": 102.838363, "lat": 25.013096}, {"relatedJG": "嘉吉动物营养（昆明）有限公司", "name": "玉溪安佑生物科技有限公司", "note": "", "lng": 102.529264, "lat": 24.260161}, {"relatedJG": "嘉吉动物营养（昆明）有限公司", "name": "昆明新希望动物营养食品有限公司", "note": "", "lng": 103.195328, "lat": 24.998247}, {"relatedJG": "嘉吉动物营养（昆明）有限公司", "name": "金钱实业（云南）有限公司", "note": "", "lng": 102.528475, "lat": 24.259275}, {"relatedJG": "嘉吉动物营养（昆明）有限公司", "name": "海大集团云南公司", "note": "", "lng": 103.196975, "lat": 24.995732}, {"relatedJG": "嘉吉动物营养（昆明）有限公司", "name": "昆明正大有限公司", "note": "", "lng": 102.543568, "lat": 24.940232}, {"relatedJG": "嘉吉动物营养（昆明）有限公司", "name": "大理正大有限公司", "note": "", "lng": 100.472159, "lat": 25.396483}, {"relatedJG": "嘉吉动物营养（昆明）有限公司", "name": "云南海大生物科技有限公司", "note": "", "lng": 103.196975, "lat": 24.995732}, {"relatedJG": "嘉吉动物营养（昆明）有限公司", "name": "云南青葵生物科技有限公司", "note": "", "lng": 102.500275, "lat": 25.667175}, {"relatedJG": "嘉吉动物营养（昆明）有限公司", "name": "云南丰厚农业科技有限公司", "note": "", "lng": 102.76352, "lat": 25.029179}, {"relatedJG": "嘉吉动物营养（昆明）有限公司", "name": "云南海瑞生物科技有限公司", "note": "", "lng": 103.044866, "lat": 25.252452}, {"relatedJG": "嘉吉动物营养（昆明）有限公司", "name": "云南百宜饲料科技有限公司", "note": "", "lng": 102.671903, "lat": 25.093765}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "钦州湘大骆驼饲料有限公司", "note": "", "lng": 108.624957, "lat": 22.101631}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "廊坊市稷东农业开发有限公司饲料分公司", "note": "", "lng": 116.773447, "lat": 39.515804}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "安徽申亚农业发展有限公司", "note": "", "lng": 116.899041, "lat": 32.058001}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "大乐民生物（陕西）有限公司", "note": "", "lng": 108.875526, "lat": 34.669633}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "山东日照傲农生物科技有限公司", "note": "", "lng": 118.94098, "lat": 35.449089}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "河南海鼎饲料有限公司", "note": "", "lng": 114.565274, "lat": 34.833161}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "河南九州大地生物科技有限公司", "note": "", "lng": 113.698966, "lat": 34.807227}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "蓝农（山东）牧业科技有限公司", "note": "", "lng": 118.847425, "lat": 35.150025}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "新余恒青饲料有限公司", "note": "", "lng": 114.637389, "lat": 27.803733}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "河南海大九州大地生物科技有限公司", "note": "", "lng": 116.536698, "lat": 39.802656}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "河北大北农反刍科技有限公司", "note": "", "lng": 115.631179, "lat": 38.818992}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "娄底大北农科技有限公司", "note": "", "lng": 112.038625, "lat": 27.778775}, {"relatedJG": "嘉吉饲料(武汉)有限公司", "name": "山东海能生物工程有限公司", "note": "", "lng": 119.476747, "lat": 35.459512}];
+        var allMaterials = ["喷浆玉米皮", "喷浆玉米胚芽粕", "木薯干全酒精糟", "玉米干全酒精糟", "玉米胚芽粕", "玉米胚芽饼", "玉米蛋白粉"];
+        
+        // 状态
+        var showJG = true, showZY = true, showDK = true, showJJ = true;
+        var activeMaterials = new Set(allMaterials);
+        var searchKw = '';
+        var collapsedGroups = new Set();
+        var layers = { jg: null, zy: null, dk: null, jj: null };
+        var allMarkers = { jg: [], zy: [], dk: [], jj: [] };
+        
+        // 地图
+        var map = L.map('map', {
+            center: [35.5, 105.5], zoom: 5, minZoom: 4, maxZoom: 18
+        });
+        
+        L.tileLayer('https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', {
+            subdomains: '1234', maxZoom: 18, attribution: '&copy; 高德地图'
+        }).addTo(map);
+        
+        // 创建绘图专用面板（z-index高于工厂标记的markerPane=600，确保绘制图形在工厂图标上层）
+        map.createPane('drawPane');
+        map.getPane('drawPane').style.zIndex = 620;
+        
+        // 图标
+        function starIcon() {
+            return L.divIcon({ className: 'legend-marker', html: '<div class="legend-star">★</div>', iconSize: [24, 24], iconAnchor: [12, 12] });
+        }
+        function circleIcon() {
+            return L.divIcon({ className: 'legend-marker', html: '<div class="legend-circle"></div>', iconSize: [18, 18], iconAnchor: [9, 9] });
+        }
+        function triangleIcon() {
+            return L.divIcon({ className: 'legend-marker', html: '<div class="legend-triangle"></div>', iconSize: [16, 14], iconAnchor: [8, 14] });
+        }
+        function blueCircleIcon() {
+            return L.divIcon({ className: 'legend-marker', html: '<div class="legend-blue-circle"></div>', iconSize: [18, 18], iconAnchor: [9, 9] });
+        }
+        
+        // Popup
+        function popupJG(d) {
+            return '<div class="popup-content"><div class="popup-title">' + d.name + '</div><div class="popup-detail">' + (d.note || '嘉吉自有工厂') + '</div><span class="popup-tag tag-red">嘉吉工厂</span></div>';
+        }
+        function popupZY(d) {
+            return '<div class="popup-content"><div class="popup-title">' + d.name + '</div><div class="popup-detail">原料: ' + d.material + '</div>' + (d.note ? '<div class="popup-detail">' + d.note + '</div>' : '') + '<span class="popup-tag tag-green">可用</span></div>';
+        }
+        function popupDK(d) {
+            return '<div class="popup-content"><div class="popup-title">' + d.name + '</div><div class="popup-detail">原料: ' + d.material + '</div>' + (d.note ? '<div class="popup-detail">' + d.note + '</div>' : '') + '<span class="popup-tag tag-blue">关注</span></div>';
+        }
+        function popupJJ(d) {
+            var relatedInfo = d.relatedJG ? '<div class="popup-detail">对应嘉吉: ' + d.relatedJG + '</div>' : '';
+            return '<div class="popup-content"><div class="popup-title">' + d.name + '</div><div class="popup-detail">原料: ' + d.material + '</div>' + (d.note ? '<div class="popup-detail">' + d.note + '</div>' : '') + relatedInfo + '<span class="popup-tag" style="background:#fff7e6;color:#ad4e00">竞争厂家</span></div>';
+        }
+        
+        // 名称标签管理
+        var showLabels = false;
+        var pinnedMarkers = new Set(); // 记录已固定提示框的标记（用 name+type 作为key）
+        
+        function createMarker(d, type, iconFn, popupFn) {
+            var m = L.marker([d.lat, d.lng], { icon: iconFn() }).bindPopup(popupFn(d));
+            // 添加悬停提示（permanent = 全局开启 或 该标记被单独固定）
+            var tipClass = 'factory-tip factory-tip-' + type;
+            var isPermanent = showLabels || pinnedMarkers.has(type + '|' + d.name);
+            m.bindTooltip(d.name, { direction: 'top', offset: [0, -8], className: tipClass, permanent: isPermanent });
+            if (isPermanent) m.openTooltip();
+            m.fdata = d;
+            m.ftype = type;
+            return m;
+        }
+        
+        // 切换永久标签显示（让悬停提示框永久显示/恢复悬停模式）
+        function toggleLabels() {
+            showLabels = !showLabels;
+            var btn = document.getElementById('label-toggle-btn');
+            if (showLabels) {
+                btn.classList.add('active');
+            } else {
+                btn.classList.remove('active');
+            }
+            // 更新所有标记的tooltip（permanent = 全局开启 或 该标记被单独固定）
+            ['jg', 'zy', 'dk', 'jj'].forEach(function(type) {
+                var tipClass = 'factory-tip factory-tip-' + type;
+                allMarkers[type].forEach(function(m) {
+                    var isPermanent = showLabels || pinnedMarkers.has(type + '|' + m.fdata.name);
+                    m.unbindTooltip();
+                    m.bindTooltip(m.fdata.name, {
+                        direction: 'top',
+                        offset: [0, -8],
+                        className: tipClass,
+                        permanent: isPermanent
+                    });
+                    if (isPermanent) m.openTooltip();
+                });
+            });
+        }
+        
+        // 单个标记固定/取消提示框
+        function togglePinMarker(lat, lng, type, name) {
+            var key = type + '|' + name;
+            var isPinned = pinnedMarkers.has(key);
+            var markers = allMarkers[type];
+            for (var i = 0; i < markers.length; i++) {
+                var m = markers[i];
+                var ll = m.getLatLng();
+                if (Math.abs(ll.lat - lat) < 0.0001 && Math.abs(ll.lng - lng) < 0.0001) {
+                    var tipClass = 'factory-tip factory-tip-' + type;
+                    if (isPinned) {
+                        pinnedMarkers.delete(key);
+                        m.unbindTooltip();
+                        m.bindTooltip(name, { direction: 'top', offset: [0, -8], className: tipClass, permanent: false });
+                    } else {
+                        pinnedMarkers.add(key);
+                        m.unbindTooltip();
+                        m.bindTooltip(name, { direction: 'top', offset: [0, -8], className: tipClass, permanent: true });
+                        m.openTooltip();
+                    }
+                    break;
+                }
+            }
+            // 更新按钮状态
+            var btns = document.querySelectorAll('.item-pin-btn');
+            btns.forEach(function(btn) {
+                if (btn.getAttribute('data-key') === key) {
+                    if (pinnedMarkers.has(key)) {
+                        btn.classList.add('pinned');
+                        btn.textContent = '📌';
+                    } else {
+                        btn.classList.remove('pinned');
+                        btn.textContent = '📍';
+                    }
+                }
+            });
+        }
+        
+        // 初始化图层
+        function initLayers() {
+            layers.jg = L.layerGroup();
+            dataJG.forEach(function(d) {
+                var m = createMarker(d, 'jg', starIcon, popupJG);
+                allMarkers.jg.push(m);
+                layers.jg.addLayer(m);
+            });
+            layers.jg.addTo(map);
+            
+            layers.zy = L.layerGroup();
+            dataZY.forEach(function(d) {
+                var m = createMarker(d, 'zy', circleIcon, popupZY);
+                allMarkers.zy.push(m);
+                layers.zy.addLayer(m);
+            });
+            layers.zy.addTo(map);
+            
+            layers.dk = L.layerGroup();
+            dataDK.forEach(function(d) {
+                var m = createMarker(d, 'dk', blueCircleIcon, popupDK);
+                allMarkers.dk.push(m);
+                layers.dk.addLayer(m);
+            });
+            layers.dk.addTo(map);
+            
+            layers.jj = L.layerGroup();
+            layers.jj.addTo(map);
+        }
+        
+        // 获取可见工厂
+        function getVisible() {
+            var res = { jg: [], zy: {}, dk: {}, jj: {} };
+            var kw = searchKw.toLowerCase();
+            
+            if (showJG) {
+                dataJG.forEach(function(d) {
+                    if (kw && d.name.toLowerCase().indexOf(kw) < 0) return;
+                    if (jgSearchKw && d.name.toLowerCase().indexOf(jgSearchKw) < 0) return;
+                    res.jg.push(d);
+                });
+            }
+            if (showZY) {
+                dataZY.forEach(function(d) {
+                    if (!activeMaterials.has(d.material)) return;
+                    if (kw && d.name.toLowerCase().indexOf(kw) < 0) return;
+                    if (!res.zy[d.material]) res.zy[d.material] = [];
+                    res.zy[d.material].push(d);
+                });
+            }
+            if (showDK) {
+                dataDK.forEach(function(d) {
+                    if (!activeMaterials.has(d.material)) return;
+                    if (kw && d.name.toLowerCase().indexOf(kw) < 0) return;
+                    if (!res.dk[d.material]) res.dk[d.material] = [];
+                    res.dk[d.material].push(d);
+                });
+            }
+            if (showJJ && showJG) {
+                dataJJ.forEach(function(d) {
+                    if (d.material && !activeMaterials.has(d.material)) return;
+                    if (kw && d.name.toLowerCase().indexOf(kw) < 0) return;
+                    // JG search filter: only show JJ whose relatedJG matches
+                    if (jgSearchKw) {
+                        if (!d.relatedJG || d.relatedJG.toLowerCase().indexOf(jgSearchKw) < 0) return;
+                    }
+                    if (!res.jj[d.material]) res.jj[d.material] = [];
+                    res.jj[d.material].push(d);
+                });
+            }
+            return res;
+        }
+        
+        // 渲染列表
+        function renderList() {
+            var vis = getVisible();
+            var allMats = new Set(Object.keys(vis.zy).concat(Object.keys(vis.dk)).concat(Object.keys(vis.jj).filter(function(k){ return k && k !== 'undefined'; })));
+            var mats = Array.from(allMats).sort();
+            var totalCount = vis.jg.length;
+            var html = '';
+            
+            // ── 嘉吉工厂 section ──
+            if (vis.jg.length > 0) {
+                var isCollapsed = collapsedGroups.has('__jg__');
+                html += '<div class="material-group">';
+                html += '<div class="material-group-header" onclick="toggleGroup(\'__jg__\')">';
+                html += '<span class="arrow ' + (isCollapsed ? 'collapsed' : '') + '">▼</span>';
+                html += '<span class="group-name">⭐ 嘉吉工厂</span>';
+                html += '<span class="group-count">' + vis.jg.length + '家</span>';
+                html += '</div>';
+                html += '<div class="factory-items' + (isCollapsed ? ' collapsed' : '') + '">';
+                vis.jg.forEach(function(d) {
+                    var pkey = 'jg|' + d.name;
+                    var pinCls = pinnedMarkers.has(pkey) ? ' pinned' : '';
+                    var pinIcon = pinnedMarkers.has(pkey) ? '📌' : '📍';
+                    var ename = d.name.replace(/'/g, "\\'");
+                    html += '<div class="factory-item" onclick="locateFactory(' + d.lat + ',' + d.lng + ',\'jg\',\'' + ename + '\')">';
+                    html += '<div class="item-dot jg"></div>';
+                    html += '<div class="item-info"><div class="item-name">' + d.name + '</div>';
+                    if (d.note) html += '<div class="item-note">' + d.note + '</div>';
+                    html += '</div>';
+                    html += '<span class="item-type jg">嘉吉</span>';
+                    html += '<button class="item-pin-btn' + pinCls + '" onclick="event.stopPropagation();togglePinMarker(' + d.lat + ',' + d.lng + ',\'jg\',\'' + ename + '\')">' + pinIcon + '</button>';
+                    html += '</div>';
+                });
+                html += '</div></div>';
+            }
+            
+            // ── 竞争厂家 section ──
+            var jjAll = [];
+            Object.keys(vis.jj).forEach(function(k) {
+                jjAll = jjAll.concat(vis.jj[k]);
+            });
+            if (jjAll.length > 0) {
+                var isCollapsedJj = collapsedGroups.has('__jj__');
+                html += '<div class="material-group">';
+                html += '<div class="material-group-header" onclick="toggleGroup(\'__jj__\')">';
+                html += '<span class="arrow ' + (isCollapsedJj ? 'collapsed' : '') + '">▼</span>';
+                html += '<span class="group-name">🔶 竞争厂家</span>';
+                html += '<span class="group-count">' + jjAll.length + '家</span>';
+                html += '</div>';
+                html += '<div class="factory-items' + (isCollapsedJj ? ' collapsed' : '') + '">';
+                jjAll.forEach(function(d) {
+                    var pkey = 'jj|' + d.name;
+                    var pinCls = pinnedMarkers.has(pkey) ? ' pinned' : '';
+                    var pinIcon = pinnedMarkers.has(pkey) ? '📌' : '📍';
+                    var ename = d.name.replace(/'/g, "\\'");
+                    html += '<div class="factory-item" onclick="locateFactory(' + d.lat + ',' + d.lng + ',\'jj\',\'' + ename + '\')">';
+                    html += '<div class="item-dot jj"></div>';
+                    html += '<div class="item-info"><div class="item-name">' + d.name + '</div>';
+                    if (d.note) html += '<div class="item-note">' + d.note + '</div>';
+                    if (d.relatedJG) html += '<div class="item-note">对应: ' + d.relatedJG + '</div>';
+                    html += '</div>';
+                    html += '<span class="item-type jj">竞争</span>';
+                    html += '<button class="item-pin-btn' + pinCls + '" onclick="event.stopPropagation();togglePinMarker(' + d.lat + ',' + d.lng + ',\'jj\',\'' + ename + '\')">' + pinIcon + '</button>';
+                    html += '</div>';
+                });
+                html += '</div></div>';
+                totalCount += jjAll.length;
+            }
+            
+            // ── 按原料分组 section（可用 / 关注） ──
+            if (mats.length === 0 && vis.jg.length === 0 && jjAll.length === 0) {
+                html += '<div class="empty-state">当前条件下无工厂<br>请调整筛选</div>';
+            } else {
+                mats.forEach(function(mat) {
+                    var zyList = vis.zy[mat] || [];
+                    var dkList = vis.dk[mat] || [];
+                    var all = zyList.concat(dkList);
+                    totalCount += all.length;
+                    var isCollapsed = collapsedGroups.has(mat);
+                    
+                    html += '<div class="material-group">';
+                    html += '<div class="material-group-header" onclick="toggleGroup(\'' + mat + '\')">';
+                    html += '<span class="arrow ' + (isCollapsed ? 'collapsed' : '') + '">▼</span>';
+                    html += '<span class="group-name">' + mat + '</span>';
+                    html += '<span class="group-count">' + all.length + '家</span>';
+                    html += '</div>';
+                    html += '<div class="factory-items' + (isCollapsed ? ' collapsed' : '') + '">';
+                    
+                    zyList.forEach(function(d) {
+                        var pkey = 'zy|' + d.name;
+                        var pinCls = pinnedMarkers.has(pkey) ? ' pinned' : '';
+                        var pinIcon = pinnedMarkers.has(pkey) ? '📌' : '📍';
+                        html += '<div class="factory-item" onclick="locateFactory(' + d.lat + ',' + d.lng + ',\'zy\',\'' + d.name.replace(/'/g, "\\'") + '\')">';
+                        html += '<div class="item-dot zy"></div>';
+                        html += '<div class="item-info"><div class="item-name">' + d.name + '</div>';
+                        if (d.note) html += '<div class="item-note">' + d.note + '</div>';
+                        html += '</div>';
+                        html += '<span class="item-type zy">可用</span>';
+                        html += '<button class="item-pin-btn' + pinCls + '" onclick="event.stopPropagation();togglePinMarker(' + d.lat + ',' + d.lng + ',\'zy\',\'' + d.name.replace(/'/g, "\\'") + '\')">' + pinIcon + '</button>';
+                        html += '</div>';
+                    });
+                    
+                    dkList.forEach(function(d) {
+                        var pkey = 'dk|' + d.name;
+                        var pinCls = pinnedMarkers.has(pkey) ? ' pinned' : '';
+                        var pinIcon = pinnedMarkers.has(pkey) ? '📌' : '📍';
+                        html += '<div class="factory-item" onclick="locateFactory(' + d.lat + ',' + d.lng + ',\'dk\',\'' + d.name.replace(/'/g, "\\'") + '\')">';
+                        html += '<div class="item-dot dk"></div>';
+                        html += '<div class="item-info"><div class="item-name">' + d.name + '</div>';
+                        if (d.note) html += '<div class="item-note">' + d.note + '</div>';
+                        html += '</div>';
+                        html += '<span class="item-type dk">关注</span>';
+                        html += '<button class="item-pin-btn' + pinCls + '" onclick="event.stopPropagation();togglePinMarker(' + d.lat + ',' + d.lng + ',\'dk\',\'' + d.name.replace(/'/g, "\\'") + '\')">' + pinIcon + '</button>';
+                        html += '</div>';
+                    });
+                    
+                    html += '</div></div>';
+                });
+            }
+            
+            document.getElementById('factory-list').innerHTML = html;
+            document.getElementById('left-count').textContent = totalCount;
+        }
+        
+        // 折叠
+        function toggleGroup(mat) {
+            if (collapsedGroups.has(mat)) collapsedGroups.delete(mat);
+            else collapsedGroups.add(mat);
+            renderList();
+        }
+        
+        // 定位
+        function locateFactory(lat, lng, type, name) {
+            map.setView([lat, lng], 13);
+            var markers = allMarkers[type];
+            for (var i = 0; i < markers.length; i++) {
+                var m = markers[i];
+                var ll = m.getLatLng();
+                if (Math.abs(ll.lat - lat) < 0.0001 && Math.abs(ll.lng - lng) < 0.0001) {
+                    m.openPopup();
+                    break;
+                }
+            }
+        }
+        
+        // 搜索
+        function onSearch(v) {
+            searchKw = v.trim();
+            renderList();
+        }
+        
+        // 切换类别
+        function toggleCategory(type) {
+            if (type === 'jg') {
+                showJG = !showJG;
+                document.getElementById('switch-jg').classList.toggle('on');
+                rebuildJG();
+                if (showJG) map.addLayer(layers.jg); else map.removeLayer(layers.jg);
+            } else if (type === 'zy') {
+                showZY = !showZY;
+                document.getElementById('switch-zy').classList.toggle('on');
+                if (showZY) map.addLayer(layers.zy); else map.removeLayer(layers.zy);
+            } else if (type === 'dk') {
+                showDK = !showDK;
+                document.getElementById('switch-dk').classList.toggle('on');
+                if (showDK) map.addLayer(layers.dk); else map.removeLayer(layers.dk);
+            } else if (type === 'jj') {
+                showJJ = !showJJ;
+                document.getElementById('switch-jj').classList.toggle('on');
+                rebuildJJ();
+                if (showJJ) map.addLayer(layers.jj); else map.removeLayer(layers.jj);
+            }
+            if (type === 'zy' || type === 'dk') rebuildLayer(type);
+            if (type === 'jg') rebuildJJ();
+            updateStats();
+            renderList();
+        }
+        
+        // 切换原料
+        function toggleMaterial(btn) {
+            btn.classList.toggle('active');
+            var mat = btn.getAttribute('data-material');
+            if (activeMaterials.has(mat)) activeMaterials.delete(mat);
+            else activeMaterials.add(mat);
+            rebuildLayer('zy');
+            rebuildLayer('dk');
+            rebuildJJ();
+            updateStats();
+            renderList();
+        }
+        
+        // 重建图层
+        function rebuildLayer(type) {
+            var arr = type === 'zy' ? dataZY : dataDK;
+            var iconFn = type === 'zy' ? circleIcon : blueCircleIcon;
+            var popupFn = type === 'zy' ? popupZY : popupDK;
+            var show = type === 'zy' ? showZY : showDK;
+            
+            layers[type].clearLayers();
+            allMarkers[type] = [];
+            
+            if (!show) { document.getElementById('count-' + type).textContent = '0'; return; }
+            
+            var cnt = 0;
+            arr.forEach(function(d) {
+                if (activeMaterials.has(d.material)) {
+                    var m = createMarker(d, type, iconFn, popupFn);
+                    layers[type].addLayer(m);
+                    allMarkers[type].push(m);
+                    cnt++;
+                }
+            });
+            document.getElementById('count-' + type).textContent = cnt;
+        }
+        
+        // 重建竞争厂家图层
+        function rebuildJJ() {
+            layers.jj.clearLayers();
+            allMarkers.jj = [];
+            var cnt = 0;
+            if (!showJJ || !showJG) {
+                document.getElementById('count-jj').textContent = '0';
+                return;
+            }
+            dataJJ.forEach(function(d) {
+                if (d.material && !activeMaterials.has(d.material)) return;
+                // JG search filter
+                if (jgSearchKw) {
+                    if (!d.relatedJG || d.relatedJG.toLowerCase().indexOf(jgSearchKw) < 0) return;
+                }
+                var m = createMarker(d, 'jj', triangleIcon, popupJJ);
+                layers.jj.addLayer(m);
+                allMarkers.jj.push(m);
+                cnt++;
+            });
+            document.getElementById('count-jj').textContent = cnt;
+        }
+        
+        // 统计
+        function updateStats() {
+            var n = 0;
+            if (showJG) n += allMarkers.jg.length;
+            if (showZY) dataZY.forEach(function(d) { if (activeMaterials.has(d.material)) n++; });
+            if (showDK) dataDK.forEach(function(d) { if (activeMaterials.has(d.material)) n++; });
+            if (showJJ && showJG) {
+                dataJJ.forEach(function(d) {
+                    if (d.material && !activeMaterials.has(d.material)) return;
+                    if (jgSearchKw && (!d.relatedJG || d.relatedJG.toLowerCase().indexOf(jgSearchKw) < 0)) return;
+                    n++;
+                });
+            }
+            document.getElementById('visible-count').textContent = n;
+        }
+        
+
+        var jgSearchKw = '';
+        
+        function togglePanel() {
+            document.body.classList.toggle('panel-collapsed');
+            var btn = document.getElementById('panel-toggle');
+            btn.innerHTML = document.body.classList.contains('panel-collapsed') ? '&#9654;' : '&#9664;';
+            setTimeout(function() { map.invalidateSize(); }, 350);
+        }
+        
+        function onJGSearch(v) {
+            jgSearchKw = v.trim().toLowerCase();
+            rebuildJG();
+            if (showJG && !map.hasLayer(layers.jg)) map.addLayer(layers.jg);
+            rebuildJJ();
+            updateStats();
+            renderList();
+        }
+        
+        function rebuildJG() {
+            layers.jg.clearLayers();
+            allMarkers.jg = [];
+            var cnt = 0;
+            dataJG.forEach(function(d) {
+                if (jgSearchKw && d.name.toLowerCase().indexOf(jgSearchKw) < 0) return;
+                var m = createMarker(d, 'jg', starIcon, popupJG);
+                layers.jg.addLayer(m);
+                allMarkers.jg.push(m);
+                cnt++;
+            });
+            document.getElementById('count-jg').textContent = cnt;
+            updateStats();
+        }
+
+
+
+        // ======================================================
+        // 功能1: 导出当前筛选结果为Excel
+        // ======================================================
+        function exportExcel() {
+            var rows = [];
+            // 嘉吉工厂
+            if (showJG) {
+                dataJG.forEach(function(d) {
+                    if (jgSearchKw && d.name.toLowerCase().indexOf(jgSearchKw) < 0) return;
+                    rows.push({
+                        '类型': '嘉吉工厂',
+                        '原料名称': '',
+                        '工厂名称': d.name,
+                        '备注': d.note || '嘉吉自有工厂',
+                        '经度': d.lng,
+                        '纬度': d.lat
+                    });
+                });
+            }
+            // 在用厂家
+            if (showZY) {
+                dataZY.forEach(function(d) {
+                    if (!activeMaterials.has(d.material)) return;
+                    if (searchKw && d.name.toLowerCase().indexOf(searchKw) < 0) return;
+                    rows.push({
+                        '类型': '可用',
+                        '原料名称': d.material,
+                        '工厂名称': d.name,
+                        '备注': d.note || '',
+                        '经度': d.lng,
+                        '纬度': d.lat
+                    });
+                });
+            }
+            // 待开发厂家
+            if (showDK) {
+                dataDK.forEach(function(d) {
+                    if (!activeMaterials.has(d.material)) return;
+                    if (searchKw && d.name.toLowerCase().indexOf(searchKw) < 0) return;
+                    rows.push({
+                        '类型': '关注',
+                        '原料名称': d.material,
+                        '工厂名称': d.name,
+                        '备注': d.note || '',
+                        '经度': d.lng,
+                        '纬度': d.lat
+                    });
+                });
+            }
+            
+            // 竞争厂家
+            if (showJJ && showJG) {
+                dataJJ.forEach(function(d) {
+                    if (d.material && !activeMaterials.has(d.material)) return;
+                    if (jgSearchKw && (!d.relatedJG || d.relatedJG.toLowerCase().indexOf(jgSearchKw) < 0)) return;
+                    if (searchKw && d.name.toLowerCase().indexOf(searchKw) < 0) return;
+                    rows.push({
+                        '类型': '竞争厂家',
+                        '原料名称': d.material,
+                        '工厂名称': d.name,
+                        '备注': d.note || '',
+                        '对应嘉吉': d.relatedJG || '',
+                        '经度': d.lng,
+                        '纬度': d.lat
+                    });
+                });
+            }
+            
+            if (rows.length === 0) {
+                showToast('当前筛选条件下无数据可导出', true);
+                return;
+            }
+            
+            var ws = XLSX.utils.json_to_sheet(rows);
+            // 设置列宽
+            ws['!cols'] = [
+                {wch: 10}, {wch: 16}, {wch: 30}, {wch: 20}, {wch: 12}, {wch: 12}
+            ];
+            var wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, '工厂列表');
+            
+            var now = new Date();
+            var fname = '工厂分布_' + now.getFullYear() + 
+                        String(now.getMonth()+1).padStart(2,'0') + 
+                        String(now.getDate()).padStart(2,'0') + '.xlsx';
+            XLSX.writeFile(wb, fname);
+            showToast('✅ 已导出 ' + rows.length + ' 家工厂到 ' + fname, false);
+        }
+
+        // ======================================================
+        // 功能2: 批量测距
+        // ======================================================
+        var batchDistMode = false;
+        var batchDistRef = null; // {lat, lng, name}
+        var batchDistMarker = null;
+        var batchDistLines = [];
+        var batchDistResults = [];
+
+        function toggleBatchDist() {
+            batchDistMode = !batchDistMode;
+            var btn = document.getElementById('batch-dist-btn');
+            var panel = document.getElementById('batch-dist-panel');
+            
+            if (batchDistMode) {
+                btn.classList.add('active');
+                panel.style.display = 'block';
+                document.getElementById('bdp-body').innerHTML = 
+                    '<div class="bdp-hint">👆 请在地图上点击选择一个参考工厂<br><small>将计算该点到所有可见工厂的距离</small></div>';
+                map.getContainer().style.cursor = 'crosshair';
+                enterDrawMode();
+                map.on('click', onBatchDistMapClick);
+            } else {
+                closeBatchDist();
+            }
+        }
+
+        function closeBatchDist() {
+            batchDistMode = false;
+            var btn = document.getElementById('batch-dist-btn');
+            btn.classList.remove('active');
+            document.getElementById('batch-dist-panel').style.display = 'none';
+            map.getContainer().style.cursor = '';
+            exitDrawMode();
+            map.off('click', onBatchDistMapClick);
+            // 清除标记
+            if (batchDistMarker) { map.removeLayer(batchDistMarker); batchDistMarker = null; }
+            batchDistLines.forEach(function(l) { map.removeLayer(l); });
+            batchDistLines = [];
+            batchDistRef = null;
+        }
+
+        function onBatchDistMapClick(e) {
+            if (!batchDistMode) return;
+            var lat = e.latlng.lat;
+            var lng = e.latlng.lng;
+            
+            // 找最近的工厂
+            var nearest = findNearestFactory(lat, lng);
+            if (!nearest) return;
+            
+            batchDistRef = { lat: nearest.lat, lng: nearest.lng, name: nearest.name, type: nearest.type };
+            
+            // 移除旧标记
+            if (batchDistMarker) map.removeLayer(batchDistMarker);
+            batchDistLines.forEach(function(l) { map.removeLayer(l); });
+            batchDistLines = [];
+            
+            // 添加参考点标记
+            batchDistMarker = L.marker([nearest.lat, nearest.lng], {
+                icon: L.divIcon({
+                    className: 'legend-marker',
+                    html: '<div style="background:#e74c3c;width:20px;height:20px;border-radius:50%;border:3px solid white;box-shadow:0 2px 6px rgba(0,0,0,0.3);"></div>',
+                    iconSize: [20, 20], iconAnchor: [10, 10]
+                })
+            }).bindPopup('<b>参考点</b><br>' + nearest.name).openPopup();
+            map.addLayer(batchDistMarker);
+            map.setView([nearest.lat, nearest.lng], 8);
+            
+            // 计算到所有可见工厂的距离
+            var results = [];
+            var allVisible = [];
+            
+            if (showJG) {
+                dataJG.forEach(function(d) {
+                    if (jgSearchKw && d.name.toLowerCase().indexOf(jgSearchKw) < 0) return;
+                    allVisible.push({ name: d.name, lat: d.lat, lng: d.lng, type: '嘉吉', material: '' });
+                });
+            }
+            if (showZY) {
+                dataZY.forEach(function(d) {
+                    if (!activeMaterials.has(d.material)) return;
+                    if (searchKw && d.name.toLowerCase().indexOf(searchKw) < 0) return;
+                    allVisible.push({ name: d.name, lat: d.lat, lng: d.lng, type: '可用', material: d.material });
+                });
+            }
+            if (showDK) {
+                dataDK.forEach(function(d) {
+                    if (!activeMaterials.has(d.material)) return;
+                    if (searchKw && d.name.toLowerCase().indexOf(searchKw) < 0) return;
+                    allVisible.push({ name: d.name, lat: d.lat, lng: d.lng, type: '关注', material: d.material });
+                });
+            }
+            if (showJJ && showJG) {
+                dataJJ.forEach(function(d) {
+                    if (d.material && !activeMaterials.has(d.material)) return;
+                    if (jgSearchKw && (!d.relatedJG || d.relatedJG.toLowerCase().indexOf(jgSearchKw) < 0)) return;
+                    if (searchKw && d.name.toLowerCase().indexOf(searchKw) < 0) return;
+                    allVisible.push({ name: d.name, lat: d.lat, lng: d.lng, type: '竞争', material: d.material });
+                });
+            }
+            
+            allVisible.forEach(function(f) {
+                // 跳过参考点自身
+                if (Math.abs(f.lat - nearest.lat) < 0.0001 && Math.abs(f.lng - nearest.lng) < 0.0001) return;
+                var dist = haversine(nearest.lat, nearest.lng, f.lat, f.lng);
+                results.push({
+                    name: f.name,
+                    type: f.type,
+                    material: f.material,
+                    dist: dist,
+                    lat: f.lat,
+                    lng: f.lng
+                });
+                
+                // 画连线
+                var lineColor = dist < 100000 ? '#2ecc71' : dist < 300000 ? '#f39c12' : '#e74c3c';
+                var line = L.polyline([[nearest.lat, nearest.lng], [f.lat, f.lng]], {
+                    color: lineColor, weight: 1, opacity: 0.4, dashArray: '4 4'
+                });
+                map.addLayer(line);
+                batchDistLines.push(line);
+            });
+            
+            // 按距离排序
+            results.sort(function(a, b) { return a.dist - b.dist; });
+            batchDistResults = results;
+            
+            // 渲染结果表格
+            renderBatchDistTable(results, nearest.name);
+        }
+
+        function renderBatchDistTable(results, refName) {
+            var html = '<div style="padding:6px 8px;font-size:12px;color:#666;">';
+            html += '参考点: <b style="color:#e74c3c;">' + refName + '</b> &nbsp;|&nbsp; 共 ' + results.length + ' 家';
+            html += ' <button onclick="exportBatchDist()" style="float:right;padding:2px 8px;border:1px solid #ddd;border-radius:4px;background:#fafafa;cursor:pointer;font-size:11px;">📥 导出</button>';
+            html += '</div>';
+            html += '<table><thead><tr><th>#</th><th>工厂</th><th>类型</th><th>距离</th></tr></thead><tbody>';
+            
+            results.forEach(function(r, i) {
+                var distStr = r.dist >= 1000 ? (r.dist / 1000).toFixed(1) + ' km' : r.dist.toFixed(0) + ' m';
+                var color = r.dist < 100000 ? '#2ecc71' : r.dist < 300000 ? '#f39c12' : '#e74c3c';
+                var typeLabel = r.type === '嘉吉' ? '嘉吉' : (r.material ? r.type + '/' + r.material : r.type);
+                html += '<tr onclick="map.setView([' + r.lat + ',' + r.lng + '],12)" style="cursor:pointer">';
+                html += '<td>' + (i + 1) + '</td>';
+                html += '<td>' + r.name + '</td>';
+                html += '<td style="font-size:11px;color:#888;">' + typeLabel + '</td>';
+                html += '<td class="dist-val" style="color:' + color + '">' + distStr + '</td>';
+                html += '</tr>';
+            });
+            html += '</tbody></table>';
+            
+            document.getElementById('bdp-body').innerHTML = html;
+        }
+
+        function exportBatchDist() {
+            if (batchDistResults.length === 0 || !batchDistRef) return;
+            var rows = [];
+            batchDistResults.forEach(function(r, i) {
+                rows.push({
+                    '序号': i + 1,
+                    '参考点': batchDistRef.name,
+                    '目标工厂': r.name,
+                    '类型': r.type,
+                    '原料': r.material,
+                    '直线距离(km)': (r.dist / 1000).toFixed(2),
+                    '经度': r.lng,
+                    '纬度': r.lat
+                });
+            });
+            var ws = XLSX.utils.json_to_sheet(rows);
+            ws['!cols'] = [{wch:6},{wch:25},{wch:25},{wch:8},{wch:14},{wch:14},{wch:12},{wch:12}];
+            var wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, '距离测算');
+            var now = new Date();
+            var fname = '距离测算_' + batchDistRef.name.substring(0,8) + '_' + 
+                        now.getFullYear() + String(now.getMonth()+1).padStart(2,'0') + 
+                        String(now.getDate()).padStart(2,'0') + '.xlsx';
+            XLSX.writeFile(wb, fname);
+            showToast('✅ 已导出距离测算结果', false);
+        }
+
+        function findNearestFactory(lat, lng) {
+            var best = null;
+            var bestDist = Infinity;
+            var check = function(d, type) {
+                var dist = haversine(lat, lng, d.lat, d.lng);
+                if (dist < bestDist) {
+                    bestDist = dist;
+                    best = { name: d.name, lat: d.lat, lng: d.lng, type: type };
+                }
+            };
+            if (showJG) dataJG.forEach(function(d) { check(d, '嘉吉'); });
+            if (showZY) dataZY.forEach(function(d) { if (activeMaterials.has(d.material)) check(d, '可用'); });
+            if (showDK) dataDK.forEach(function(d) { if (activeMaterials.has(d.material)) check(d, '关注'); });
+            if (showJJ && showJG) dataJJ.forEach(function(d) { 
+                if (d.material && !activeMaterials.has(d.material)) return;
+                if (jgSearchKw && (!d.relatedJG || d.relatedJG.toLowerCase().indexOf(jgSearchKw) < 0)) return;
+                check(d, '竞争'); 
+            });
+            return best;
+        }
+
+        // ======================================================
+        // 功能3: 画圈工具
+        // ======================================================
+        var circleDrawMode = false;
+        var circleRadius = 100000; // 默认100km
+        var drawnCircles = []; // {circle, label, radius, center}
+
+        function toggleCircleDraw() {
+            circleDrawMode = !circleDrawMode;
+            var btn = document.getElementById('draw-circle-btn');
+            var popup = document.getElementById('circle-radius-popup');
+            
+            if (circleDrawMode) {
+                btn.classList.add('active');
+                // 定位半径选择器到按钮下方
+                var rect = btn.getBoundingClientRect();
+                var mapRect = document.getElementById('map').getBoundingClientRect();
+                popup.style.top = (rect.bottom - mapRect.top + 8) + 'px';
+                popup.style.left = (rect.left - mapRect.left) + 'px';
+                popup.style.display = 'block';
+                map.getContainer().style.cursor = 'crosshair';
+                enterDrawMode();
+                map.on('click', onCircleMapClick);
+            } else {
+                btn.classList.remove('active');
+                popup.style.display = 'none';
+                map.getContainer().style.cursor = '';
+                exitDrawMode();
+                map.off('click', onCircleMapClick);
+            }
+        }
+
+        function setCircleRadius(el, r) {
+            circleRadius = r;
+            document.querySelectorAll('.crp-opt').forEach(function(o) { o.classList.remove('active'); });
+            el.classList.add('active');
+        }
+
+        function onCircleMapClick(e) {
+            if (!circleDrawMode) return;
+            var latlng = e.latlng;
+            var rKm = circleRadius >= 1000 ? (circleRadius / 1000) + 'km' : circleRadius + 'm';
+            
+            // 画圆
+            var circle = L.circle(latlng, {
+                radius: circleRadius,
+                color: '#3498db',
+                fillColor: '#3498db',
+                fillOpacity: 0.08,
+                weight: 2,
+                dashArray: '6 4'
+            }).addTo(map);
+            
+            // 中心标记
+            var centerMarker = L.marker(latlng, {
+                icon: L.divIcon({
+                    className: 'legend-marker',
+                    html: '<div style="background:#3498db;width:10px;height:10px;border-radius:50%;border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,0.3);"></div>',
+                    iconSize: [10, 10], iconAnchor: [5, 5]
+                })
+            }).addTo(map);
+            
+            // 半径标注
+            var label = L.marker(latlng, {
+                icon: L.divIcon({
+                    className: 'text-label-content',
+                    html: '<div style="border-left-color:#3498db;">⊙ ' + rKm + '</div>',
+                    iconSize: [80, 24], iconAnchor: [40, -8]
+                })
+            }).addTo(map);
+            
+            var idx = drawnCircles.length;
+            drawnCircles.push({
+                circle: circle,
+                marker: centerMarker,
+                label: label,
+                radius: circleRadius,
+                center: latlng
+            });
+            
+            updateCircleList();
+        }
+
+        function updateCircleList() {
+            var panel = document.getElementById('circle-list-panel');
+            var items = document.getElementById('clp-items');
+            
+            if (drawnCircles.length === 0) {
+                panel.style.display = 'none';
+                return;
+            }
+            
+            panel.style.display = 'block';
+            var html = '<span style="color:#888;">已画圆圈:</span>';
+            drawnCircles.forEach(function(c, i) {
+                var rKm = c.radius >= 1000 ? (c.radius / 1000) + 'km' : c.radius + 'm';
+                html += '<div class="clp-item">';
+                html += '<span style="color:#3498db;">⊙</span> ' + rKm;
+                html += ' <span class="clp-remove" onclick="removeCircle(' + i + ')">✕</span>';
+                html += '</div>';
+            });
+            html += '<span class="clp-item" style="cursor:pointer;color:#e74c3c;" onclick="clearAllCircles()">🧹 全清</span>';
+            items.innerHTML = html;
+        }
+
+        function removeCircle(idx) {
+            if (idx < 0 || idx >= drawnCircles.length) return;
+            var c = drawnCircles[idx];
+            map.removeLayer(c.circle);
+            map.removeLayer(c.marker);
+            map.removeLayer(c.label);
+            drawnCircles.splice(idx, 1);
+            updateCircleList();
+        }
+
+        function clearAllCircles() {
+            drawnCircles.forEach(function(c) {
+                map.removeLayer(c.circle);
+                map.removeLayer(c.marker);
+                map.removeLayer(c.label);
+            });
+            drawnCircles = [];
+            updateCircleList();
+        }
+
+        // ===== Excel导入 =====
+        function showToast(msg, isError) {
+            var t = document.getElementById('import-toast');
+            t.textContent = msg;
+            t.className = isError ? 'error' : '';
+            t.style.display = 'block';
+            setTimeout(function() { t.style.display = 'none'; }, 3000);
+        }
+
+        function parseCoord(str) {
+            if (!str) return null;
+            str = String(str).trim().replace(/[\s\u3000]+/g, '');
+            // Try splitting by comma (both English and Chinese)
+            var parts = str.split(/[,，]/);
+            if (parts.length >= 2) {
+                var lng = parseFloat(parts[0]);
+                var lat = parseFloat(parts[1]);
+                if (!isNaN(lng) && !isNaN(lat) && lng !== 0 && lat !== 0) {
+                    return { lng: lng, lat: lat };
+                }
+            }
+            return null;
+        }
+
+        function importExcel(input) {
+            var file = input.files[0];
+            if (!file) return;
+            
+            var reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    var data = new Uint8Array(e.target.result);
+                    var wb = XLSX.read(data, { type: 'array' });
+                    
+                    // Parse 嘉吉工厂
+                    var newJG = [];
+                    if (wb.SheetNames.indexOf('嘉吉工厂') >= 0) {
+                        var ws = wb.Sheets['嘉吉工厂'];
+                        var rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+                        rows.forEach(function(r) {
+                            var name = String(r['工厂名称'] || '').trim();
+                            if (!name) return;
+                            var coord = parseCoord(r['坐标']);
+                            if (!coord) return;
+                            newJG.push({
+                                name: name,
+                                note: String(r['备注'] || '').trim(),
+                                lng: coord.lng,
+                                lat: coord.lat
+                            });
+                        });
+                    }
+                    
+                    // Parse 可用(在用厂家)
+                    var newZY = [];
+                    var zySheetName = wb.SheetNames.indexOf('可用') >= 0 ? '可用' : (wb.SheetNames.indexOf('在用厂家') >= 0 ? '在用厂家' : null);
+                    if (zySheetName) {
+                        var ws = wb.Sheets[zySheetName];
+                        var rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+                        rows.forEach(function(r) {
+                            var name = String(r['工厂名称'] || '').trim();
+                            if (!name) return;
+                            var coord = parseCoord(r['坐标']);
+                            if (!coord) return;
+                            newZY.push({
+                                material: String(r['原料名称'] || '').trim(),
+                                name: name,
+                                note: String(r['备注'] || '').trim(),
+                                lng: coord.lng,
+                                lat: coord.lat
+                            });
+                        });
+                    }
+                    
+                    // Parse 关注(待开发厂家)
+                    var newDK = [];
+                    var dkSheetName = wb.SheetNames.indexOf('关注') >= 0 ? '关注' : (wb.SheetNames.indexOf('待开发厂家') >= 0 ? '待开发厂家' : null);
+                    if (dkSheetName) {
+                        var ws = wb.Sheets[dkSheetName];
+                        var rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+                        rows.forEach(function(r) {
+                            var name = String(r['工厂名称'] || '').trim();
+                            if (!name) return;
+                            var coord = parseCoord(r['坐标']);
+                            if (!coord) return;
+                            newDK.push({
+                                material: String(r['原料名称'] || '').trim(),
+                                name: name,
+                                note: String(r['备注'] || '').trim(),
+                                lng: coord.lng,
+                                lat: coord.lat
+                            });
+                        });
+                    }
+                    
+                    // Parse 竞争厂家
+                    var newJJ = [];
+                    if (wb.SheetNames.indexOf('竞争厂家') >= 0) {
+                        var ws = wb.Sheets['竞争厂家'];
+                        var rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+                        rows.forEach(function(r) {
+                            var name = String(r['工厂名称'] || '').trim();
+                            if (!name) return;
+                            var coord = parseCoord(r['坐标']);
+                            if (!coord) return;
+                            newJJ.push({
+                                material: String(r['原料名称'] || '').trim(),
+                                name: name,
+                                note: String(r['备注'] || '').trim(),
+                                relatedJG: String(r['对应嘉吉工厂'] || r['关联嘉吉'] || '').trim(),
+                                lng: coord.lng,
+                                lat: coord.lat
+                            });
+                        });
+                    }
+                    
+                    if (newJG.length === 0 && newZY.length === 0 && newDK.length === 0 && newJJ.length === 0) {
+                        showToast('未读取到有效数据，请检查表格格式', true);
+                        input.value = '';
+                        return;
+                    }
+                    
+                    // Update data
+                    dataJG = newJG;
+                    dataZY = newZY;
+                    dataDK = newDK;
+                    dataJJ = newJJ;
+                    
+                    // Rebuild allMaterials
+                    var matSet = new Set();
+                    dataZY.forEach(function(d) { matSet.add(d.material); });
+                    dataDK.forEach(function(d) { matSet.add(d.material); });
+                    dataJJ.forEach(function(d) { matSet.add(d.material); });
+                    allMaterials = Array.from(matSet).sort();
+                    activeMaterials = new Set(allMaterials);
+                    
+                    // Rebuild material filter buttons
+                    var fg = document.querySelector('.filter-group');
+                    if (fg) {
+                        var btnHtml = '';
+                        allMaterials.forEach(function(mat) {
+                            btnHtml += '<div class="filter-btn active" data-material="' + mat + '" onclick="toggleMaterial(this)">' + mat + '</div>';
+                        });
+                        fg.innerHTML = btnHtml;
+                    }
+                    
+                    // Rebuild all layers
+                    collapsedGroups = new Set();
+                    searchKw = '';
+                    jgSearchKw = '';
+                    var searchInput = document.getElementById('jg-search-input');
+                    if (searchInput) searchInput.value = '';
+                    var listSearch = document.querySelector('.left-search input');
+                    if (listSearch) listSearch.value = '';
+                    
+                    // Reset switches to on
+                    showJG = true; showZY = true; showDK = true; showJJ = true;
+                    document.getElementById('switch-jg').classList.add('on');
+                    document.getElementById('switch-zy').classList.add('on');
+                    document.getElementById('switch-dk').classList.add('on');
+                    document.getElementById('switch-jj').classList.add('on');
+                    
+                    // Rebuild layers
+                    layers.jg.clearLayers();
+                    layers.zy.clearLayers();
+                    layers.dk.clearLayers();
+                    layers.jj.clearLayers();
+                    allMarkers = { jg: [], zy: [], dk: [], jj: [] };
+                    
+                    // JG
+                    dataJG.forEach(function(d) {
+                        var m = createMarker(d, 'jg', starIcon, popupJG);
+                        allMarkers.jg.push(m);
+                        layers.jg.addLayer(m);
+                    });
+                    if (!map.hasLayer(layers.jg)) map.addLayer(layers.jg);
+                    
+                    // ZY
+                    dataZY.forEach(function(d) {
+                        if (activeMaterials.has(d.material)) {
+                            var m = createMarker(d, 'zy', circleIcon, popupZY);
+                            allMarkers.zy.push(m);
+                            layers.zy.addLayer(m);
+                        }
+                    });
+                    if (!map.hasLayer(layers.zy)) map.addLayer(layers.zy);
+                    
+                    // DK
+                    dataDK.forEach(function(d) {
+                        if (activeMaterials.has(d.material)) {
+                            var m = createMarker(d, 'dk', blueCircleIcon, popupDK);
+                            allMarkers.dk.push(m);
+                            layers.dk.addLayer(m);
+                        }
+                    });
+                    if (!map.hasLayer(layers.dk)) map.addLayer(layers.dk);
+                    
+                    // JJ
+                    dataJJ.forEach(function(d) {
+                        if (activeMaterials.has(d.material)) {
+                            var m = createMarker(d, 'jj', triangleIcon, popupJJ);
+                            allMarkers.jj.push(m);
+                            layers.jj.addLayer(m);
+                        }
+                    });
+                    if (!map.hasLayer(layers.jj)) map.addLayer(layers.jj);
+                    
+                    // Update counts
+                    document.getElementById('count-jg').textContent = dataJG.length;
+                    document.getElementById('count-zy').textContent = dataZY.length;
+                    document.getElementById('count-dk').textContent = dataDK.length;
+                    document.getElementById('count-jj').textContent = dataJJ.length;
+                    
+                    // Update stats and list
+                    updateStats();
+                    renderList();
+                    
+                    var total = dataJG.length + dataZY.length + dataDK.length + dataJJ.length;
+                    showToast('✅ 导入成功：嘉吉' + dataJG.length + '家 / 可用' + dataZY.length + '家 / 关注' + dataDK.length + '家 / 竞争' + dataJJ.length + '家，共' + total + '家', false);
+                    
+                } catch(err) {
+                    console.error(err);
+                    showToast('导入失败: ' + err.message, true);
+                }
+                input.value = '';
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+
+
+        // ===== 测距工具 =====
+        var measuring = false;
+        var measurePoints = [];
+        var measureMarkers = [];
+        var measurePolyline = null;
+        var measureLabels = [];
+        
+        function haversine(lat1, lng1, lat2, lng2) {
+            var R = 6371000;
+            var dLat = (lat2 - lat1) * Math.PI / 180;
+            var dLng = (lng2 - lng1) * Math.PI / 180;
+            var a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                    Math.cos(lat1 * Math.PI/180) * Math.cos(lat2 * Math.PI/180) *
+                    Math.sin(dLng/2) * Math.sin(dLng/2);
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        }
+        
+        function formatDist(m) {
+            if (m >= 1000) return (m/1000).toFixed(2) + ' km';
+            return m.toFixed(0) + ' m';
+        }
+        
+        function toggleMeasure() {
+            measuring = !measuring;
+            var btn = document.getElementById('measure-btn');
+            if (measuring) {
+                btn.classList.add('active');
+                btn.innerHTML = '&#10005; 结束测距';
+                map.getContainer().style.cursor = 'crosshair';
+                map.on('click', onMeasureClick);
+            } else {
+                btn.classList.remove('active');
+                btn.innerHTML = '&#128207; 测距';
+                map.getContainer().style.cursor = '';
+                map.off('click', onMeasureClick);
+            }
+        }
+        
+        function onMeasureClick(e) {
+            var latlng = e.latlng;
+            measurePoints.push(latlng);
+            
+            // 添加圆点标记
+            var dot = L.marker(latlng, {
+                icon: L.divIcon({ className: 'legend-marker', html: '<div class="measure-dot"></div>', iconSize: [8,8], iconAnchor: [4,4] }),
+                interactive: false
+            }).addTo(map);
+            measureMarkers.push(dot);
+            
+            if (measurePoints.length > 1) {
+                var p1 = measurePoints[measurePoints.length - 2];
+                var p2 = measurePoints[measurePoints.length - 1];
+                var dist = haversine(p1.lat, p1.lng, p2.lat, p2.lng);
+                
+                // 绘制线段
+                if (measurePolyline) map.removeLayer(measurePolyline);
+                measurePolyline = L.polyline(measurePoints, { color: '#e74c3c', weight: 2, dashArray: '6,6', opacity: 0.8 }).addTo(map);
+                
+                // 距离标签
+                var midLat = (p1.lat + p2.lat) / 2;
+                var midLng = (p1.lng + p2.lng) / 2;
+                var lbl = L.marker([midLat, midLng], {
+                    icon: L.divIcon({ className: 'legend-marker', html: '<div class="measure-dist-label">' + formatDist(dist) + '</div>', iconSize: [80,20], iconAnchor: [40,10] }),
+                    interactive: false
+                }).addTo(map);
+                measureLabels.push(lbl);
+            }
+            
+            updateMeasureInfo();
+        }
+        
+        function updateMeasureInfo() {
+            var info = document.getElementById('measure-info');
+            if (measurePoints.length === 0) {
+                info.style.display = 'none';
+                return;
+            }
+            info.style.display = 'block';
+            var totalDist = 0;
+            var segs = '';
+            for (var i = 1; i < measurePoints.length; i++) {
+                var d = haversine(measurePoints[i-1].lat, measurePoints[i-1].lng, measurePoints[i].lat, measurePoints[i].lng);
+                totalDist += d;
+                segs += '<div class="mi-seg">第' + i + '段: ' + formatDist(d) + '</div>';
+            }
+            var html = '<div class="mi-title">&#128207; 测距结果</div>';
+            html += '<div class="mi-seg">共 ' + measurePoints.length + ' 个点, ' + (measurePoints.length-1) + ' 段</div>';
+            html += segs;
+            if (measurePoints.length > 1) {
+                html += '<div class="mi-total">总距离: ' + formatDist(totalDist) + '</div>';
+            }
+            html += '<div class="mi-clear"><span onclick="clearMeasure()">清除重测</span></div>';
+            info.innerHTML = html;
+        }
+        
+        function clearMeasure() {
+            measureMarkers.forEach(function(m) { map.removeLayer(m); });
+            measureLabels.forEach(function(l) { map.removeLayer(l); });
+            if (measurePolyline) map.removeLayer(measurePolyline);
+            measurePoints = [];
+            measureMarkers = [];
+            measureLabels = [];
+            measurePolyline = null;
+            document.getElementById('measure-info').style.display = 'none';
+        }
+
+
+        // ===== 绘图工具 =====
+        var drawColor = '#e74c3c';
+        var currentDrawHandler = null;
+        var drawEditHandler = null;
+        var drawDeleteHandler = null;
+        var drawnItems = new L.FeatureGroup();
+        var textLabelPending = null;
+        
+        map.addLayer(drawnItems);
+        
+        function setDrawColor(el) {
+            document.querySelectorAll('.color-dot').forEach(function(d) { d.classList.remove('active'); });
+            el.classList.add('active');
+            drawColor = el.getAttribute('data-color');
+        }
+        
+
+        // 绘图模式下禁用工厂标记交互和地图拖拽，防止干扰绘图
+        function enterDrawMode() { 
+            if (map) { map.getContainer().classList.add('draw-mode'); }
+        }
+        function exitDrawMode() { 
+            if (map) { map.getContainer().classList.remove('draw-mode'); }
+        }
+
+        function stopAllDraw() {
+            if (currentDrawHandler) { currentDrawHandler.disable(); currentDrawHandler = null; }
+            if (drawEditHandler) { drawEditHandler.disable(); drawEditHandler = null; }
+            if (drawDeleteHandler) { drawDeleteHandler.disable(); drawDeleteHandler = null; }
+            document.querySelectorAll('.dt-btn').forEach(function(b) { b.classList.remove('active'); });
+            map.getContainer().style.cursor = '';
+            exitDrawMode();
+        }
+        
+        function startDraw(type) {
+            stopAllDraw();
+            var btn = document.querySelector('[data-draw="' + type + '"]');
+            if (btn) btn.classList.add('active');
+            
+            if (type === 'text') {
+                map.getContainer().style.cursor = 'crosshair';
+                enterDrawMode();
+                map.once('click', function(e) {
+                    textLabelPending = e.latlng;
+                    document.getElementById('text-label-dialog').style.display = 'block';
+                    document.getElementById('text-label-input').value = '';
+                    document.getElementById('text-label-input').focus();
+                    map.getContainer().style.cursor = '';
+                    if (btn) btn.classList.remove('active');
+                });
+                return;
+            }
+            
+            var opts = {
+                shapeOptions: { color: drawColor, weight: 3, opacity: 0.8 }
+            };
+            
+            if (type === 'marker') {
+                currentDrawHandler = new L.Draw.Marker(map, {});
+            } else if (type === 'polyline') {
+                currentDrawHandler = new L.Draw.Polyline(map, opts);
+            } else if (type === 'arrow') {
+                currentDrawHandler = new L.Draw.Polyline(map, opts);
+                currentDrawHandler._isArrow = true;
+            } else if (type === 'polygon') {
+                currentDrawHandler = new L.Draw.Polygon(map, opts);
+            } else if (type === 'rectangle') {
+                currentDrawHandler = new L.Draw.Rectangle(map, opts);
+            } else if (type === 'circle') {
+                currentDrawHandler = new L.Draw.Circle(map, opts);
+            }
+            
+            if (currentDrawHandler) {
+                currentDrawHandler.enable();
+                enterDrawMode();
+            } else {
+                console.error('Draw handler not created for type:', type);
+            }
+        }
+        
+        // 绘图完成事件
+        map.on(L.Draw.Event.CREATED, function(e) {
+            var layer = e.layer;
+            var type = e.layerType;
+            layer.drawColor = drawColor;
+            layer.options.pane = 'drawPane';  // 置于工厂图标上层
+            
+            // 箭头处理
+            if (currentDrawHandler && currentDrawHandler._isArrow) {
+                addArrowHeads(layer);
+            }
+            
+            drawnItems.addLayer(layer);
+            
+            // 绑定删除popup
+            layer.bindTooltip('点击🗑️按钮删除', {sticky: true, opacity: 0.8});
+            
+            stopAllDraw();
+        });
+        
+        // 添加箭头标记
+        function addArrowHeads(polyline) {
+            var latlngs = polyline.getLatLngs();
+            if (latlngs.length < 2) return;
+            
+            // 在终点添加箭头
+            var end = latlngs[latlngs.length - 1];
+            var prev = latlngs[latlngs.length - 2];
+            var angle = Math.atan2(end.lng - prev.lng, end.lat - prev.lat) * 180 / Math.PI;
+            
+            var arrowIcon = L.divIcon({
+                className: 'legend-marker',
+                html: '<div style="font-size:24px;color:' + drawColor + ';transform:rotate(' + (angle - 90) + 'deg);line-height:1;">&#10148;</div>',
+                iconSize: [24, 24],
+                iconAnchor: [12, 12]
+            });
+            var arrowMarker = L.marker(end, {icon: arrowIcon, interactive: false, pane: 'drawPane'});
+            arrowMarker._isArrowHead = true;
+            drawnItems.addLayer(arrowMarker);
+        }
+        
+        // 文字标注
+        function confirmTextLabel() {
+            var text = document.getElementById('text-label-input').value.trim();
+            if (!text || !textLabelPending) {
+                cancelTextLabel();
+                return;
+            }
+            var icon = L.divIcon({
+                className: 'text-label-marker',
+                html: '<div class="text-label-content" style="border-left-color:' + drawColor + '">' + text + '</div>',
+                iconSize: [null, null],
+                iconAnchor: [5, 12]
+            });
+            var marker = L.marker(textLabelPending, {icon: icon, draggable: true, pane: 'drawPane'});
+            marker._labelText = text;
+            marker.drawColor = drawColor;
+            drawnItems.addLayer(marker);
+            cancelTextLabel();
+        }
+        
+        function cancelTextLabel() {
+            document.getElementById('text-label-dialog').style.display = 'none';
+            textLabelPending = null;
+            map.getContainer().style.cursor = '';
+        }
+        
+        // Enter键确认
+        document.getElementById('text-label-input').addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') confirmTextLabel();
+            if (e.key === 'Escape') cancelTextLabel();
+        });
+        
+        // 编辑模式
+        function toggleEditDraw() {
+            if (drawEditHandler) {
+                drawEditHandler.disable();
+                drawEditHandler = null;
+                document.querySelector('[title="编辑图形"]').classList.remove('active');
+                exitDrawMode();
+                return;
+            }
+            stopAllDraw();
+            drawEditHandler = new L.EditToolbar.Edit(map, {featureGroup: drawnItems});
+            drawEditHandler.enable();
+            enterDrawMode();
+            document.querySelector('[title="编辑图形"]').classList.add('active');
+        }
+        
+        // 删除模式
+        function toggleDeleteDraw() {
+            if (drawDeleteHandler) {
+                drawDeleteHandler.disable();
+                drawDeleteHandler = null;
+                document.querySelector('[title="删除图形"]').classList.remove('active');
+                exitDrawMode();
+                return;
+            }
+            stopAllDraw();
+            drawDeleteHandler = new L.EditToolbar.Delete(map, {featureGroup: drawnItems});
+            drawDeleteHandler.enable();
+            enterDrawMode();
+            document.querySelector('[title="删除图形"]').classList.add('active');
+        }
+        
+        // 清除全部
+        function clearAllDraw() {
+            drawnItems.clearLayers();
+        }
+
+        // 初始化
+        initLayers();
+        renderList();
+        
+        // 适配视野
+        var pts = [];
+        dataJG.forEach(function(d) { pts.push([d.lat, d.lng]); });
+        dataZY.forEach(function(d) { pts.push([d.lat, d.lng]); });
+        dataDK.forEach(function(d) { pts.push([d.lat, d.lng]); });
+        dataJJ.forEach(function(d) { pts.push([d.lat, d.lng]); });
+        if (pts.length) map.fitBounds(pts, { padding: [50, 50] });
+
+        // 右侧面板隐藏/显示
+        function toggleControlPanel() {
+            var panel = document.getElementById('control-panel');
+            var btn = document.getElementById('cp-toggle');
+            panel.classList.toggle('cp-hidden');
+            if (panel.classList.contains('cp-hidden')) {
+                btn.textContent = '⚙️';
+                btn.title = '显示控制面板';
+                btn.style.right = '10px';
+            } else {
+                btn.textContent = '✖';
+                btn.title = '隐藏控制面板';
+                btn.style.right = '284px';
+            }
+        }
+
+    </script>
+<div id="import-toast"></div>
+</body>
+</html>
