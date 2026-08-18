@@ -2038,12 +2038,11 @@
 
 
 
-        // ===== 测距工具 =====
+        // ===== 测距工具（点对点模式） =====
         var measuring = false;
-        var measurePoints = [];
-        var measureMarkers = [];
-        var measurePolyline = null;
-        var measureLabels = [];
+        var measurePair = [];     // 当前一对点 [A, B]
+        var measureVisuals = [];  // 所有可视元素（点、线、标签）
+        var measureResults = [];  // 所有已完成的测量结果 [{dist, p1, p2}]
         
         function haversine(lat1, lng1, lat2, lng2) {
             var R = 6371000;
@@ -2063,38 +2062,54 @@
         function toggleMeasure() {
             measuring = !measuring;
             var btn = document.getElementById('measure-btn');
+            var allLayers = [].concat(allMarkers.jg, allMarkers.zy, allMarkers.dk, allMarkers.jj);
             if (measuring) {
                 btn.classList.add('active');
                 btn.innerHTML = '&#10005; 结束测距';
                 map.getContainer().style.cursor = 'crosshair';
                 map.on('click', onMeasureClick);
+                // 拦截标识点击：测距模式下不弹提示框，改为测距取点
+                allLayers.forEach(function(m) {
+                    m._measureHandler = function(ev) {
+                        ev.originalEvent.stopPropagation();
+                        m.closePopup();
+                        onMeasureClick({ latlng: ev.target.getLatLng() });
+                    };
+                    m.on('click', m._measureHandler);
+                });
+                showMeasureHint('点击地图选取第1个点');
             } else {
                 btn.classList.remove('active');
                 btn.innerHTML = '&#128207; 测距';
                 map.getContainer().style.cursor = '';
                 map.off('click', onMeasureClick);
+                // 恢复标识点击
+                allLayers.forEach(function(m) {
+                    if (m._measureHandler) { m.off('click', m._measureHandler); delete m._measureHandler; }
+                });
+                document.getElementById('measure-info').style.display = 'none';
             }
         }
         
         function onMeasureClick(e) {
             var latlng = e.latlng;
-            measurePoints.push(latlng);
             
-            // 添加圆点标记
+            // 添加圆点
             var dot = L.marker(latlng, {
                 icon: L.divIcon({ className: 'legend-marker', html: '<div class="measure-dot"></div>', iconSize: [8,8], iconAnchor: [4,4] }),
                 interactive: false
             }).addTo(map);
-            measureMarkers.push(dot);
+            measureVisuals.push(dot);
+            measurePair.push(latlng);
             
-            if (measurePoints.length > 1) {
-                var p1 = measurePoints[measurePoints.length - 2];
-                var p2 = measurePoints[measurePoints.length - 1];
+            if (measurePair.length === 2) {
+                // 第2个点 → 计算距离、画线、显示结果
+                var p1 = measurePair[0], p2 = measurePair[1];
                 var dist = haversine(p1.lat, p1.lng, p2.lat, p2.lng);
                 
-                // 绘制线段
-                if (measurePolyline) map.removeLayer(measurePolyline);
-                measurePolyline = L.polyline(measurePoints, { color: '#e74c3c', weight: 2, dashArray: '6,6', opacity: 0.8 }).addTo(map);
+                // 线段
+                var poly = L.polyline([p1, p2], { color: '#e74c3c', weight: 2, dashArray: '6,6', opacity: 0.8 }).addTo(map);
+                measureVisuals.push(poly);
                 
                 // 距离标签
                 var midLat = (p1.lat + p2.lat) / 2;
@@ -2103,45 +2118,66 @@
                     icon: L.divIcon({ className: 'legend-marker', html: '<div class="measure-dist-label">' + formatDist(dist) + '</div>', iconSize: [80,20], iconAnchor: [40,10] }),
                     interactive: false
                 }).addTo(map);
-                measureLabels.push(lbl);
+                measureVisuals.push(lbl);
+                
+                measureResults.push({ dist: dist, p1: p1, p2: p2 });
+                showAllMeasureResults();
+                
+                // 重置点对，等待下一次测量
+                measurePair = [];
+            } else {
+                showMeasureHint('点击地图选取第2个点');
             }
-            
-            updateMeasureInfo();
         }
         
-        function updateMeasureInfo() {
+        function showMeasureHint(text) {
             var info = document.getElementById('measure-info');
-            if (measurePoints.length === 0) {
-                info.style.display = 'none';
-                return;
-            }
             info.style.display = 'block';
-            var totalDist = 0;
-            var segs = '';
-            for (var i = 1; i < measurePoints.length; i++) {
-                var d = haversine(measurePoints[i-1].lat, measurePoints[i-1].lng, measurePoints[i].lat, measurePoints[i].lng);
-                totalDist += d;
-                segs += '<div class="mi-seg">第' + i + '段: ' + formatDist(d) + '</div>';
+            var html = '<div class="mi-title">&#128207; 点对点测距</div>';
+            html += '<div class="mi-seg">' + text + '</div>';
+            if (measureResults.length > 0) {
+                html += showResultsBlock();
             }
-            var html = '<div class="mi-title">&#128207; 测距结果</div>';
-            html += '<div class="mi-seg">共 ' + measurePoints.length + ' 个点, ' + (measurePoints.length-1) + ' 段</div>';
-            html += segs;
-            if (measurePoints.length > 1) {
-                html += '<div class="mi-total">总距离: ' + formatDist(totalDist) + '</div>';
-            }
-            html += '<div class="mi-clear"><span onclick="clearMeasure()">清除重测</span></div>';
             info.innerHTML = html;
         }
         
+        function showAllMeasureResults() {
+            var info = document.getElementById('measure-info');
+            info.style.display = 'block';
+            var html = '<div class="mi-title">&#128207; 测距结果（' + measureResults.length + '组）</div>';
+            html += showResultsBlock();
+            html += '<div class="mi-seg" style="margin-top:6px;color:#999;font-size:11px">继续点击可测量更多</div>';
+            info.innerHTML = html;
+        }
+        
+        function showResultsBlock() {
+            var totalDist = 0;
+            var segs = '';
+            for (var i = 0; i < measureResults.length; i++) {
+                var r = measureResults[i];
+                totalDist += r.dist;
+                segs += '<div class="mi-seg">第' + (i+1) + '组: ' + formatDist(r.dist) + '</div>';
+            }
+            var html = segs;
+            if (measureResults.length > 1) {
+                html += '<div class="mi-total">总计: ' + formatDist(totalDist) + '</div>';
+            } else {
+                html += '<div class="mi-total">距离: ' + formatDist(totalDist) + '</div>';
+            }
+            html += '<div class="mi-clear"><span onclick="clearMeasure()">清除重测</span></div>';
+            return html;
+        }
+        
         function clearMeasure() {
-            measureMarkers.forEach(function(m) { map.removeLayer(m); });
-            measureLabels.forEach(function(l) { map.removeLayer(l); });
-            if (measurePolyline) map.removeLayer(measurePolyline);
-            measurePoints = [];
-            measureMarkers = [];
-            measureLabels = [];
-            measurePolyline = null;
-            document.getElementById('measure-info').style.display = 'none';
+            measureVisuals.forEach(function(v) { map.removeLayer(v); });
+            measureVisuals = [];
+            measurePair = [];
+            measureResults = [];
+            if (measuring) {
+                showMeasureHint('点击地图选取第1个点');
+            } else {
+                document.getElementById('measure-info').style.display = 'none';
+            }
         }
 
 
