@@ -904,7 +904,8 @@
                     <div class="tool-btn" id="draw-circle-btn" onclick="toggleCircleDraw()"><span class="tool-icon">🔵</span>画圈工具</div>
                 </div>
                 <div class="tools-row" style="margin-top:6px">
-                    <div class="tool-btn" id="label-toggle-btn" onclick="toggleLabels()"><span class="tool-icon">📌</span>固定名称</div>
+                    <div class="tool-btn" id="label-toggle-btn" onclick="toggleLabels()"><span class="tool-icon">🏷️</span>显示名称</div>
+                    <div class="tool-btn" id="clear-pin-btn" onclick="if(window.__pinCards){window.__pinCards.clear();showToast('已清除全部固定卡片',false);}"><span class="tool-icon">🧹</span>清除固定</div>
                 </div>
             </div>
         </div>
@@ -1007,87 +1008,50 @@
         
         // 名称标签管理
         var showLabels = false;
-        var pinnedMarkers = new Set(); // 记录已固定提示框的标记（用 name+type 作为key）
         
         function createMarker(d, type, iconFn, popupFn) {
-            var m = L.marker([d.lat, d.lng], { icon: iconFn() });
-            m._popupHTML = popupFn(d); // 保存HTML，由可拖动callout使用
-            m.on('click', function(ev){
-                L.DomEvent.stopPropagation(ev);
-                if (window.__callout) window.__callout.open(m, type, m._popupHTML);
-            });
-            // 添加悬停提示（permanent = 全局开启 或 该标记被单独固定）
+            var m = L.marker([d.lat, d.lng], { icon: iconFn() }).bindPopup(popupFn(d));
+            m._popupHTML = popupFn(d);
+            // 悬停名称提示（永久显示由全局 showLabels 控制）
             var tipClass = 'factory-tip factory-tip-' + type;
-            var isPermanent = showLabels || pinnedMarkers.has(type + '|' + d.name);
-            m.bindTooltip(d.name, { direction: 'top', offset: [0, -8], className: tipClass, permanent: isPermanent });
-            if (isPermanent) m.openTooltip();
+            m.bindTooltip(d.name, { direction: 'top', offset: [0, -8], className: tipClass, permanent: showLabels });
+            if (showLabels) m.openTooltip();
             m.fdata = d;
             m.ftype = type;
             return m;
         }
         
-        // 切换永久标签显示（让悬停提示框永久显示/恢复悬停模式）
+        // 切换全部名称标签显示
         function toggleLabels() {
             showLabels = !showLabels;
             var btn = document.getElementById('label-toggle-btn');
-            if (showLabels) {
-                btn.classList.add('active');
-            } else {
-                btn.classList.remove('active');
-            }
-            // 更新所有标记的tooltip（permanent = 全局开启 或 该标记被单独固定）
+            if (showLabels) btn.classList.add('active'); else btn.classList.remove('active');
             ['jg', 'zy', 'dk', 'jj'].forEach(function(type) {
                 var tipClass = 'factory-tip factory-tip-' + type;
                 allMarkers[type].forEach(function(m) {
-                    var isPermanent = showLabels || pinnedMarkers.has(type + '|' + m.fdata.name);
                     m.unbindTooltip();
-                    m.bindTooltip(m.fdata.name, {
-                        direction: 'top',
-                        offset: [0, -8],
-                        className: tipClass,
-                        permanent: isPermanent
-                    });
-                    if (isPermanent) m.openTooltip();
+                    m.bindTooltip(m.fdata.name, { direction: 'top', offset: [0, -8], className: tipClass, permanent: showLabels });
+                    if (showLabels) m.openTooltip();
                 });
             });
         }
         
-        // 单个标记固定/取消提示框
+        // 单个工厂固定/取消固定为可拖动卡片（多卡片）
         function togglePinMarker(lat, lng, type, name) {
             var key = type + '|' + name;
-            var isPinned = pinnedMarkers.has(key);
-            var markers = allMarkers[type];
-            for (var i = 0; i < markers.length; i++) {
-                var m = markers[i];
-                var ll = m.getLatLng();
-                if (Math.abs(ll.lat - lat) < 0.0001 && Math.abs(ll.lng - lng) < 0.0001) {
-                    var tipClass = 'factory-tip factory-tip-' + type;
-                    if (isPinned) {
-                        pinnedMarkers.delete(key);
-                        m.unbindTooltip();
-                        m.bindTooltip(name, { direction: 'top', offset: [0, -8], className: tipClass, permanent: false });
-                    } else {
-                        pinnedMarkers.add(key);
-                        m.unbindTooltip();
-                        m.bindTooltip(name, { direction: 'top', offset: [0, -8], className: tipClass, permanent: true });
-                        m.openTooltip();
+            if (window.__pinCards && window.__pinCards.has(key)) {
+                window.__pinCards.remove(key);
+            } else {
+                var markers = allMarkers[type];
+                for (var i = 0; i < markers.length; i++) {
+                    var m = markers[i];
+                    var ll = m.getLatLng();
+                    if (Math.abs(ll.lat - lat) < 0.0001 && Math.abs(ll.lng - lng) < 0.0001) {
+                        if (window.__pinCards) window.__pinCards.add(m, type, m._popupHTML);
+                        break;
                     }
-                    break;
                 }
             }
-            // 更新按钮状态
-            var btns = document.querySelectorAll('.item-pin-btn');
-            btns.forEach(function(btn) {
-                if (btn.getAttribute('data-key') === key) {
-                    if (pinnedMarkers.has(key)) {
-                        btn.classList.add('pinned');
-                        btn.textContent = '📌';
-                    } else {
-                        btn.classList.remove('pinned');
-                        btn.textContent = '📍';
-                    }
-                }
-            });
         }
         
         // 初始化图层
@@ -1183,16 +1147,15 @@
                 html += '<div class="factory-items' + (isCollapsed ? ' collapsed' : '') + '">';
                 vis.jg.forEach(function(d) {
                     var pkey = 'jg|' + d.name;
-                    var pinCls = pinnedMarkers.has(pkey) ? ' pinned' : '';
-                    var pinIcon = pinnedMarkers.has(pkey) ? '📌' : '📍';
                     var ename = d.name.replace(/'/g, "\\'");
+                    var dk = pkey.replace(/'/g, "\\'");
                     html += '<div class="factory-item" onclick="locateFactory(' + d.lat + ',' + d.lng + ',\'jg\',\'' + ename + '\')">';
                     html += '<div class="item-dot jg"></div>';
                     html += '<div class="item-info"><div class="item-name">' + d.name + '</div>';
                     if (d.note) html += '<div class="item-note">' + d.note + '</div>';
                     html += '</div>';
                     html += '<span class="item-type jg">嘉吉</span>';
-                    html += '<button class="item-pin-btn' + pinCls + '" onclick="event.stopPropagation();togglePinMarker(' + d.lat + ',' + d.lng + ',\'jg\',\'' + ename + '\')">' + pinIcon + '</button>';
+                    html += '<button class="item-pin-btn" data-key="' + pkey + '" onclick="event.stopPropagation();togglePinMarker(' + d.lat + ',' + d.lng + ',\'jg\',\'' + ename + '\')">📍</button>';
                     html += '</div>';
                 });
                 html += '</div></div>';
@@ -1214,8 +1177,6 @@
                 html += '<div class="factory-items' + (isCollapsedJj ? ' collapsed' : '') + '">';
                 jjAll.forEach(function(d) {
                     var pkey = 'jj|' + d.name;
-                    var pinCls = pinnedMarkers.has(pkey) ? ' pinned' : '';
-                    var pinIcon = pinnedMarkers.has(pkey) ? '📌' : '📍';
                     var ename = d.name.replace(/'/g, "\\'");
                     html += '<div class="factory-item" onclick="locateFactory(' + d.lat + ',' + d.lng + ',\'jj\',\'' + ename + '\')">';
                     html += '<div class="item-dot jj"></div>';
@@ -1224,7 +1185,7 @@
                     if (d.relatedJG) html += '<div class="item-note">对应: ' + d.relatedJG + '</div>';
                     html += '</div>';
                     html += '<span class="item-type jj">竞争</span>';
-                    html += '<button class="item-pin-btn' + pinCls + '" onclick="event.stopPropagation();togglePinMarker(' + d.lat + ',' + d.lng + ',\'jj\',\'' + ename + '\')">' + pinIcon + '</button>';
+                    html += '<button class="item-pin-btn" data-key="' + pkey + '" onclick="event.stopPropagation();togglePinMarker(' + d.lat + ',' + d.lng + ',\'jj\',\'' + ename + '\')">📍</button>';
                     html += '</div>';
                 });
                 html += '</div></div>';
@@ -1252,29 +1213,25 @@
                     
                     zyList.forEach(function(d) {
                         var pkey = 'zy|' + d.name;
-                        var pinCls = pinnedMarkers.has(pkey) ? ' pinned' : '';
-                        var pinIcon = pinnedMarkers.has(pkey) ? '📌' : '📍';
                         html += '<div class="factory-item" onclick="locateFactory(' + d.lat + ',' + d.lng + ',\'zy\',\'' + d.name.replace(/'/g, "\\'") + '\')">';
                         html += '<div class="item-dot zy"></div>';
                         html += '<div class="item-info"><div class="item-name">' + d.name + '</div>';
                         if (d.note) html += '<div class="item-note">' + d.note + '</div>';
                         html += '</div>';
                         html += '<span class="item-type zy">可用</span>';
-                        html += '<button class="item-pin-btn' + pinCls + '" onclick="event.stopPropagation();togglePinMarker(' + d.lat + ',' + d.lng + ',\'zy\',\'' + d.name.replace(/'/g, "\\'") + '\')">' + pinIcon + '</button>';
+                        html += '<button class="item-pin-btn" data-key="' + pkey + '" onclick="event.stopPropagation();togglePinMarker(' + d.lat + ',' + d.lng + ',\'zy\',\'' + d.name.replace(/'/g, "\\'") + '\')">📍</button>';
                         html += '</div>';
                     });
                     
                     dkList.forEach(function(d) {
                         var pkey = 'dk|' + d.name;
-                        var pinCls = pinnedMarkers.has(pkey) ? ' pinned' : '';
-                        var pinIcon = pinnedMarkers.has(pkey) ? '📌' : '📍';
                         html += '<div class="factory-item" onclick="locateFactory(' + d.lat + ',' + d.lng + ',\'dk\',\'' + d.name.replace(/'/g, "\\'") + '\')">';
                         html += '<div class="item-dot dk"></div>';
                         html += '<div class="item-info"><div class="item-name">' + d.name + '</div>';
                         if (d.note) html += '<div class="item-note">' + d.note + '</div>';
                         html += '</div>';
                         html += '<span class="item-type dk">关注</span>';
-                        html += '<button class="item-pin-btn' + pinCls + '" onclick="event.stopPropagation();togglePinMarker(' + d.lat + ',' + d.lng + ',\'dk\',\'' + d.name.replace(/'/g, "\\'") + '\')">' + pinIcon + '</button>';
+                        html += '<button class="item-pin-btn" data-key="' + pkey + '" onclick="event.stopPropagation();togglePinMarker(' + d.lat + ',' + d.lng + ',\'dk\',\'' + d.name.replace(/'/g, "\\'") + '\')">📍</button>';
                         html += '</div>';
                     });
                     
@@ -1283,6 +1240,7 @@
             }
             
             document.getElementById('factory-list').innerHTML = html;
+            if (window.__pinCards && window.__pinCards.refreshUI) window.__pinCards.refreshUI();
             document.getElementById('left-count').textContent = totalCount;
         }
         
@@ -2436,6 +2394,7 @@
         // 初始化
         initLayers();
         renderList();
+        if (window.__pinCards) setTimeout(function(){ window.__pinCards.restore(); }, 100);
         
         // 适配视野
         var pts = [];
@@ -2464,22 +2423,22 @@
     </script>
 <div id="import-toast"></div>
 
-        <!-- ========== 可拖动卡片 + 指示线（方案A） ========== -->
+        <!-- ========== 多卡片固定（方案①） ========== -->
         <script>
         (function(){
-            var card = document.getElementById('callout-card');
-            var cardTitle = document.getElementById('callout-title');
-            var cardBody = document.getElementById('callout-body');
-            var closeBtn = document.getElementById('callout-close');
-            var header = document.getElementById('callout-header');
+            var mapEl = document.getElementById('map');
             var svg = document.getElementById('callout-svg');
-            var lineEl = document.getElementById('cl-line');
-            var markerDotEl = document.getElementById('cl-marker-dot');
-            var cardArrowEl = document.getElementById('cl-card-arrow');
+            // 清空旧的单卡片 SVG 内部元素，改为动态生成
+            while (svg && svg.firstChild) svg.removeChild(svg.firstChild);
+            var oldCard = document.getElementById('callout-card');
+            if (oldCard) oldCard.parentNode.removeChild(oldCard);
 
             var TYPE_COLOR = { jg: '#e74c3c', zy: '#52c41a', dk: '#3498db', jj: '#1f6feb' };
 
-            var state = { marker: null, type: null, pos: null, dragging: false, dragOffset: {x:0,y:0} };
+            // 存储：key -> {marker, type, card, path, dot, arrow, pos:{x,y}}
+            var cards = {};
+            var _uid = 0;
+            var STORAGE_KEY = 'factory_pin_cards_v1';
 
             function isPanelOpen(){
                 return !document.body.classList.contains('panel-collapsed') &&
@@ -2498,178 +2457,254 @@
                 return { title: titleText, body: tmp.innerHTML };
             }
 
-            function defaultCardPos(){
-                var mapEl = document.getElementById('map');
-                var rect = mapEl.getBoundingClientRect();
-                var cw = card.offsetWidth || 260;
-                var ch = card.offsetHeight || 160;
-                var margin = 20;
-                // 默认放在标记点右上方
-                if (state.marker){
-                    var ll = state.marker.getLatLng();
-                    var p = map.latLngToContainerPoint(ll);
-                    var left = p.x + 24;
-                    var top = p.y - ch - 24;
-                    if (left + cw > rect.width - margin) left = p.x - cw - 24;
-                    if (left < panelWidth() + margin) left = panelWidth() + margin;
-                    if (top < margin) top = p.y + 24;
-                    if (top + ch > rect.height - margin) top = rect.height - ch - margin;
-                    if (top < margin) top = margin;
-                    return { x: left, y: top };
-                }
-                return { x: panelWidth() + margin, y: margin };
+            function saveLayout(){
+                var data = {};
+                Object.keys(cards).forEach(function(k){
+                    data[k] = { x: cards[k].pos.x, y: cards[k].pos.y };
+                });
+                try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch(e){}
+            }
+            function loadLayout(){
+                try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); }
+                catch(e){ return {}; }
             }
 
-            function openCallout(marker, type, popupHTML){
-                state.marker = marker; state.type = type;
-                var parts = stripTitle(popupHTML);
-                cardTitle.textContent = parts.title;
-                cardBody.innerHTML = parts.body;
-                card.style.display = 'block';
-                var color = TYPE_COLOR[type] || '#3498db';
-                card.style.borderColor = color;
-                lineEl.setAttribute('stroke', color);
-                markerDotEl.setAttribute('fill', color);
-                cardArrowEl.setAttribute('fill', color);
-
-                state.pos = defaultCardPos();
-                card.style.left = state.pos.x + 'px';
-                card.style.top = state.pos.y + 'px';
-                redraw();
-            }
-            function closeCallout(){
-                card.style.display = 'none';
-                state.marker = null;
-                lineEl.setAttribute('d','');
-                markerDotEl.setAttribute('cx', -100);
-                markerDotEl.setAttribute('cy', -100);
-                cardArrowEl.setAttribute('points','');
-            }
-
-            function redraw(){
-                if (!state.marker || card.style.display === 'none') return;
-                var ll = state.marker.getLatLng();
+            function defaultPos(marker, idx, cw, ch){
+                var mapRect = mapEl.getBoundingClientRect();
+                var ll = marker.getLatLng();
                 var p = map.latLngToContainerPoint(ll);
-                var rect = card.getBoundingClientRect();
-                var mapRect = document.getElementById('map').getBoundingClientRect();
-                var c = {
-                    left: rect.left - mapRect.left,
-                    top: rect.top - mapRect.top,
-                    right: rect.right - mapRect.left,
-                    bottom: rect.bottom - mapRect.top,
+                var margin = 16;
+                var left = p.x + 28;
+                var top = p.y - ch - 24;
+                // 右侧出界则放左边
+                if (left + cw > mapRect.width - margin) left = p.x - cw - 28;
+                // 被左侧面板遮挡则右移
+                if (left < panelWidth() + margin) left = panelWidth() + margin + (idx % 4) * 24;
+                // 上下越界修正
+                if (top < margin) top = p.y + 28;
+                if (top + ch > mapRect.height - margin) top = mapRect.height - ch - margin;
+                if (top < margin) top = margin;
+                return { x: left, y: top };
+            }
+
+            function redrawOne(key){
+                var c = cards[key];
+                if (!c) return;
+                var ll = c.marker.getLatLng();
+                var p = map.latLngToContainerPoint(ll);
+                var mapRect = mapEl.getBoundingClientRect();
+                var rect = c.card.getBoundingClientRect();
+                var cc = {
+                    left: rect.left - mapRect.left, top: rect.top - mapRect.top,
                     w: rect.width, h: rect.height,
                     cx: (rect.left + rect.right)/2 - mapRect.left,
                     cy: (rect.top + rect.bottom)/2 - mapRect.top
                 };
-                markerDotEl.setAttribute('cx', p.x);
-                markerDotEl.setAttribute('cy', p.y);
+                c.dot.setAttribute('cx', p.x);
+                c.dot.setAttribute('cy', p.y);
 
-                // 选最近的一条边
-                var dx = p.x - c.cx, dy = p.y - c.cy;
-                var edge, ex, ey;
-                // 计算与四条边的交点（射线从中心到p）
-                var scale;
-                var tx = dx !== 0 ? (c.w/2) / Math.abs(dx) : Infinity;
-                var ty = dy !== 0 ? (c.h/2) / Math.abs(dy) : Infinity;
-                if (tx < ty){
-                    edge = dx > 0 ? 'right' : 'left';
-                    scale = tx;
-                } else {
-                    edge = dy > 0 ? 'bottom' : 'top';
-                    scale = ty;
-                }
-                ex = c.cx + dx * scale;
-                ey = c.cy + dy * scale;
+                var dx = p.x - cc.cx, dy = p.y - cc.cy;
+                var tx = dx !== 0 ? (cc.w/2) / Math.abs(dx) : Infinity;
+                var ty = dy !== 0 ? (cc.h/2) / Math.abs(dy) : Infinity;
+                var scale = Math.min(tx, ty);
+                var ex = cc.cx + dx * scale;
+                var ey = cc.cy + dy * scale;
 
-                // 折线：marker -> 中点 -> 卡片边（两段，更现代）
                 var mx, my;
-                if (edge === 'left' || edge === 'right'){
-                    mx = ex; my = p.y;
-                } else {
-                    mx = p.x; my = ey;
-                }
-                // 限制中点在可视区域内
+                if (tx < ty){ mx = ex; my = p.y; } else { mx = p.x; my = ey; }
                 mx = Math.max(0, Math.min(mapRect.width, mx));
                 my = Math.max(0, Math.min(mapRect.height, my));
-                lineEl.setAttribute('d', 'M ' + p.x + ' ' + p.y + ' L ' + mx + ' ' + my + ' L ' + ex + ' ' + ey);
+                c.path.setAttribute('d', 'M ' + p.x + ' ' + p.y + ' L ' + mx + ' ' + my + ' L ' + ex + ' ' + ey);
 
-                // 箭头在卡片边那端，指向卡片中心
-                var adx = c.cx - ex, ady = c.cy - ey;
-                var ang = Math.atan2(ady, adx);
+                var ang = Math.atan2(cc.cy - ey, cc.cx - ex);
                 var ah = 7;
                 var a1x = ex + ah * Math.cos(ang + Math.PI - 0.4);
                 var a1y = ey + ah * Math.sin(ang + Math.PI - 0.4);
                 var a2x = ex + ah * Math.cos(ang + Math.PI + 0.4);
                 var a2y = ey + ah * Math.sin(ang + Math.PI + 0.4);
-                cardArrowEl.setAttribute('points', ex + ',' + ey + ' ' + a1x + ',' + a1y + ' ' + a2x + ',' + a2y);
+                c.arrow.setAttribute('points', ex + ',' + ey + ' ' + a1x + ',' + a1y + ' ' + a2x + ',' + a2y);
+            }
+            function redrawAll(){ Object.keys(cards).forEach(redrawOne); }
+
+            function makeDraggable(card, key){
+                var header = card.querySelector('.callout-header');
+                var state = { dragging: false, ox:0, oy:0 };
+                function down(e){
+                    e.preventDefault();
+                    state.dragging = true; card.classList.add('dragging');
+                    var pt = e.touches ? e.touches[0] : e;
+                    var rect = card.getBoundingClientRect();
+                    state.ox = pt.clientX - rect.left;
+                    state.oy = pt.clientY - rect.top;
+                    document.addEventListener('mousemove', move);
+                    document.addEventListener('mouseup', up);
+                    document.addEventListener('touchmove', move, {passive:false});
+                    document.addEventListener('touchend', up);
+                }
+                function move(e){
+                    if (!state.dragging) return;
+                    if (e.touches) e.preventDefault();
+                    var pt = e.touches ? e.touches[0] : e;
+                    var mapRect = mapEl.getBoundingClientRect();
+                    var x = pt.clientX - mapRect.left - state.ox;
+                    var y = pt.clientY - mapRect.top - state.oy;
+                    x = Math.max(panelWidth(), Math.min(mapRect.width - card.offsetWidth, x));
+                    y = Math.max(0, Math.min(mapRect.height - card.offsetHeight, y));
+                    card.style.left = x + 'px'; card.style.top = y + 'px';
+                    cards[key].pos = { x: x, y: y };
+                    redrawOne(key);
+                }
+                function up(){
+                    state.dragging = false; card.classList.remove('dragging');
+                    document.removeEventListener('mousemove', move);
+                    document.removeEventListener('mouseup', up);
+                    document.removeEventListener('touchmove', move);
+                    document.removeEventListener('touchend', up);
+                    saveLayout();
+                }
+                header.addEventListener('mousedown', down);
+                header.addEventListener('touchstart', down, {passive:false});
             }
 
-            // 拖动
-            function onDown(e){
-                e.preventDefault();
-                state.dragging = true;
-                card.classList.add('dragging');
-                var pt = e.touches ? e.touches[0] : e;
-                var rect = card.getBoundingClientRect();
-                state.dragOffset.x = pt.clientX - rect.left;
-                state.dragOffset.y = pt.clientY - rect.top;
-                document.addEventListener('mousemove', onMove);
-                document.addEventListener('mouseup', onUp);
-                document.addEventListener('touchmove', onMove, {passive:false});
-                document.addEventListener('touchend', onUp);
-            }
-            function onMove(e){
-                if (!state.dragging) return;
-                if (e.touches) e.preventDefault();
-                var pt = e.touches ? e.touches[0] : e;
-                var mapEl = document.getElementById('map');
-                var mapRect = mapEl.getBoundingClientRect();
-                var x = pt.clientX - mapRect.left - state.dragOffset.x;
-                var y = pt.clientY - mapRect.top - state.dragOffset.y;
-                var cw = card.offsetWidth, ch = card.offsetHeight;
-                x = Math.max(panelWidth(), Math.min(mapRect.width - cw, x));
-                y = Math.max(0, Math.min(mapRect.height - ch, y));
-                card.style.left = x + 'px';
-                card.style.top = y + 'px';
-                redraw();
-            }
-            function onUp(){
-                state.dragging = false;
-                card.classList.remove('dragging');
-                document.removeEventListener('mousemove', onMove);
-                document.removeEventListener('mouseup', onUp);
-                document.removeEventListener('touchmove', onMove);
-                document.removeEventListener('touchend', onUp);
-            }
-            header.addEventListener('mousedown', onDown);
-            header.addEventListener('touchstart', onDown, {passive:false});
-            closeBtn.addEventListener('click', closeCallout);
+            function createCard(marker, type, popupHTML, key, initialPos){
+                var parts = stripTitle(popupHTML);
+                var color = TYPE_COLOR[type] || '#3498db';
 
-            // 暴露给外部
-            window.__callout = { open: openCallout, close: closeCallout, redraw: redraw };
+                // SVG elements
+                var ns = 'http://www.w3.org/2000/svg';
+                var path = document.createElementNS(ns, 'path');
+                path.setAttribute('class', 'cl-line');
+                path.setAttribute('fill', 'none');
+                path.setAttribute('stroke', color);
+                path.setAttribute('stroke-width', '1.8');
+                path.setAttribute('stroke-linecap', 'round');
+                svg.appendChild(path);
 
-            // 地图移动/缩放时重绘
-            function bindMap(){
-                if (typeof map === 'undefined') { setTimeout(bindMap, 50); return; }
-                map.on('move zoom zoomend moveend viewreset resize', redraw);
+                var dot = document.createElementNS(ns, 'circle');
+                dot.setAttribute('class', 'cl-marker-dot');
+                dot.setAttribute('r', '5');
+                dot.setAttribute('fill', color);
+                dot.setAttribute('stroke', '#fff');
+                dot.setAttribute('stroke-width', '2');
+                svg.appendChild(dot);
+
+                var arrow = document.createElementNS(ns, 'polygon');
+                arrow.setAttribute('class', 'cl-card-arrow');
+                arrow.setAttribute('fill', color);
+                arrow.setAttribute('stroke', '#fff');
+                arrow.setAttribute('stroke-width', '1');
+                svg.appendChild(arrow);
+
+                // Card
+                var card = document.createElement('div');
+                card.id = 'pin-card-' + (++_uid);
+                card.className = 'callout-card';
+                card.style.cssText = 'position:absolute;z-index:900;min-width:240px;max-width:300px;background:#fff;border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,0.18),0 2px 6px rgba(0,0,0,0.08);display:block;border:1.5px solid ' + color + ';font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;';
+                card.innerHTML =
+                    '<div class="callout-header" style="display:flex;justify-content:space-between;align-items:flex-start;padding:8px 10px 4px;cursor:grab;user-select:none;">' +
+                    '<div class="callout-title" style="font-size:13px;font-weight:600;color:#333;line-height:1.4;flex:1;padding-right:6px;"></div>' +
+                    '<button class="callout-close" title="取消固定" style="width:20px;height:20px;border-radius:50%;border:none;background:rgba(0,0,0,0.06);color:#666;font-size:13px;line-height:18px;text-align:center;cursor:pointer;flex-shrink:0;padding:0;">×</button>' +
+                    '</div>' +
+                    '<div class="callout-body" style="padding:2px 12px 10px;font-size:12px;color:#555;line-height:1.6;"></div>';
+                card.querySelector('.callout-title').textContent = parts.title;
+                card.querySelector('.callout-body').innerHTML = parts.body;
+                mapEl.appendChild(card);
+
+                var cw = card.offsetWidth || 260;
+                var ch = card.offsetHeight || 150;
+                var idx = Object.keys(cards).length;
+                var pos = initialPos || defaultPos(marker, idx, cw, ch);
+                card.style.left = pos.x + 'px';
+                card.style.top = pos.y + 'px';
+
+                var obj = { marker: marker, type: type, card: card, path: path, dot: dot, arrow: arrow, pos: pos };
+                cards[key] = obj;
+
+                card.querySelector('.callout-close').addEventListener('click', function(){
+                    removeCard(key);
+                });
+                makeDraggable(card, key);
+                redrawOne(key);
+
+                // 更新列表按钮状态
+                updateListPinUI();
+                return obj;
             }
-            bindMap();
-        })();
 
-        // 拦截所有marker的click，改用callout
-        (function bindMarkerClicks(){
-            if (typeof map === 'undefined') { setTimeout(bindMarkerClicks, 50); return; }
-            map.on('layeradd', function(e){
-                var layer = e.layer;
-                if (layer && layer._popupHTML && !layer.__calloutBound){
-                    layer.__calloutBound = true;
-                    layer.off('click'); // 去掉默认popup（虽然没bind）
-                    layer.on('click', function(ev){
-                        L.DomEvent.stopPropagation(ev);
-                        window.__callout.open(layer, layer.ftype, layer._popupHTML);
+            function removeCard(key){
+                var c = cards[key];
+                if (!c) return;
+                try { c.card.parentNode.removeChild(c.card); } catch(e){}
+                try { c.path.parentNode.removeChild(c.path); } catch(e){}
+                try { c.dot.parentNode.removeChild(c.dot); } catch(e){}
+                try { c.arrow.parentNode.removeChild(c.arrow); } catch(e){}
+                delete cards[key];
+                saveLayout();
+                updateListPinUI();
+            }
+
+            function updateListPinUI(){
+                var btns = document.querySelectorAll('.item-pin-btn');
+                btns.forEach(function(btn){
+                    var k = btn.getAttribute('data-key');
+                    if (!k) return;
+                    if (cards[k]) { btn.classList.add('pinned'); btn.textContent = '📌'; }
+                    else { btn.classList.remove('pinned'); btn.textContent = '📍'; }
+                });
+            }
+
+            function findMarker(type, lat, lng, name){
+                var arr = (allMarkers && allMarkers[type]) ? allMarkers[type] : [];
+                for (var i=0;i<arr.length;i++){
+                    var m = arr[i];
+                    var ll = m.getLatLng();
+                    if (name && m.fdata && m.fdata.name === name && type) return m;
+                    if (Math.abs(ll.lat - lat) < 0.0001 && Math.abs(ll.lng - lng) < 0.0001) return m;
+                }
+                return null;
+            }
+
+            // 对外 API
+            window.__pinCards = {
+                has: function(key){ return !!cards[key]; },
+                add: function(marker, type, popupHTML){
+                    var key = type + '|' + (marker.fdata ? marker.fdata.name : '');
+                    if (cards[key]) return;
+                    var saved = loadLayout();
+                    createCard(marker, type, popupHTML, key, saved[key] || null);
+                    saveLayout();
+                },
+                remove: function(key){ removeCard(key); },
+                clear: function(){
+                    Object.keys(cards).slice().forEach(removeCard);
+                },
+                redraw: redrawAll,
+                refreshUI: updateListPinUI,
+                restore: function(){
+                    // 页面加载后从 localStorage 恢复
+                    var saved = loadLayout();
+                    var keys = Object.keys(saved);
+                    keys.forEach(function(k){
+                        var parts = k.split('|');
+                        var type = parts[0], name = parts.slice(1).join('|');
+                        var m = findMarker(type, 0, 0, name);
+                        if (m && m._popupHTML){
+                            createCard(m, type, m._popupHTML, k, saved[k]);
+                        }
                     });
                 }
-            });
+            };
+
+            function bindMap(){
+                if (typeof map === 'undefined') { setTimeout(bindMap, 50); return; }
+                map.on('move zoom zoomend moveend viewreset resize', redrawAll);
+                // 窗口大小变化
+                window.addEventListener('resize', redrawAll);
+                // 面板折叠状态变化时重绘
+                var pt = document.getElementById('panel-toggle');
+                if (pt) pt.addEventListener('click', function(){ setTimeout(redrawAll, 320); });
+            }
+            bindMap();
         })();
         </script>
 
