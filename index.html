@@ -2531,6 +2531,7 @@
                 var state = { dragging: false, ox:0, oy:0 };
                 function down(e){
                     e.preventDefault();
+                    e.stopPropagation();
                     state.dragging = true; card.classList.add('dragging');
                     var pt = e.touches ? e.touches[0] : e;
                     var rect = card.getBoundingClientRect();
@@ -2543,6 +2544,7 @@
                 }
                 function move(e){
                     if (!state.dragging) return;
+                    e.stopPropagation();
                     if (e.touches) e.preventDefault();
                     var pt = e.touches ? e.touches[0] : e;
                     var mapRect = mapEl.getBoundingClientRect();
@@ -2624,6 +2626,11 @@
                     removeCard(key);
                 });
                 makeDraggable(card, key);
+                // 关键：阻止卡片上的鼠标/滚轮事件冒泡到地图，否则会被当成拖地图/缩放
+                if (window.L && L.DomEvent) {
+                    L.DomEvent.disableClickPropagation(card);
+                    L.DomEvent.disableScrollPropagation(card);
+                }
                 redrawOne(key);
 
                 // 更新列表按钮状态
