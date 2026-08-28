@@ -2510,11 +2510,7 @@
                 var ex = cc.cx + dx * scale;
                 var ey = cc.cy + dy * scale;
 
-                var mx, my;
-                if (tx < ty){ mx = ex; my = p.y; } else { mx = p.x; my = ey; }
-                mx = Math.max(0, Math.min(mapRect.width, mx));
-                my = Math.max(0, Math.min(mapRect.height, my));
-                c.path.setAttribute('d', 'M ' + p.x + ' ' + p.y + ' L ' + mx + ' ' + my + ' L ' + ex + ' ' + ey);
+                c.path.setAttribute('d', 'M ' + p.x + ' ' + p.y + ' L ' + ex + ' ' + ey);
 
                 var ang = Math.atan2(cc.cy - ey, cc.cx - ex);
                 var ah = 7;
