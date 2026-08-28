@@ -721,7 +721,46 @@
             cursor: pointer; color: #e74c3c; font-weight: bold;
             margin-left: 2px;
         }
-        </style>
+        
+        /* === Draggable callout (方案A：弹性指示线卡片) === */
+        #callout-card {
+            position: absolute;
+            z-index: 900;
+            min-width: 240px;
+            max-width: 300px;
+            background: #fff;
+            border-radius: 10px;
+            box-shadow: 0 6px 24px rgba(0,0,0,0.18), 0 2px 6px rgba(0,0,0,0.08);
+            display: none;
+            overflow: visible;
+            border: 1.5px solid #3498db;
+            font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+        }
+        #callout-card.dragging { cursor: grabbing !important; transition: none; }
+        #callout-card .callout-header {
+            display: flex; justify-content: space-between; align-items: flex-start;
+            padding: 8px 10px 4px; cursor: grab; user-select: none;
+        }
+        #callout-card.dragging .callout-header { cursor: grabbing; }
+        #callout-card .callout-title { font-size: 13px; font-weight: 600; color: #333; line-height: 1.4; flex: 1; padding-right: 6px; }
+        #callout-card .callout-close {
+            width: 20px; height: 20px; border-radius: 50%; border: none;
+            background: rgba(0,0,0,0.06); color: #666; font-size: 13px; line-height: 18px;
+            text-align: center; cursor: pointer; flex-shrink: 0; padding: 0;
+        }
+        #callout-card .callout-close:hover { background: #e74c3c; color: #fff; }
+        #callout-card .callout-body { padding: 2px 12px 10px; font-size: 12px; color: #555; line-height: 1.6; }
+        #callout-card .callout-body .popup-tag { margin-top: 6px; }
+        #callout-card .callout-body .popup-detail { word-break: break-word; }
+        #callout-svg {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none; z-index: 899; overflow: visible;
+        }
+        #callout-svg .cl-line { fill: none; stroke-width: 1.8; stroke-linecap: round; }
+        #callout-svg .cl-marker-dot { stroke-width: 2; }
+        #callout-svg .cl-card-arrow { stroke-linejoin: round; }
+
+    </style>
 </head>
 <body>
     <!-- 左侧面板 -->
@@ -745,6 +784,20 @@
     <!-- 右侧地图 -->
     <div id="map-container">
         <div id="map"></div>
+        <!-- 可拖动卡片 + 指示线 -->
+        <svg id="callout-svg">
+            <path id="cl-line" class="cl-line" d="" stroke="#3498db"/>
+            <circle id="cl-marker-dot" class="cl-marker-dot" cx="0" cy="0" r="5" fill="#3498db" stroke="#fff"/>
+            <polygon id="cl-card-arrow" class="cl-card-arrow" points="" fill="#3498db" stroke="#fff" stroke-width="1"/>
+        </svg>
+        <div id="callout-card">
+            <div class="callout-header" id="callout-header">
+                <div class="callout-title" id="callout-title"></div>
+                <button class="callout-close" id="callout-close" title="关闭">×</button>
+            </div>
+            <div class="callout-body" id="callout-body"></div>
+        </div>
+
         
         <button id="measure-btn" onclick="toggleMeasure()">📏 测距</button>
         <div id="measure-info"></div>
@@ -957,7 +1010,12 @@
         var pinnedMarkers = new Set(); // 记录已固定提示框的标记（用 name+type 作为key）
         
         function createMarker(d, type, iconFn, popupFn) {
-            var m = L.marker([d.lat, d.lng], { icon: iconFn() }).bindPopup(popupFn(d));
+            var m = L.marker([d.lat, d.lng], { icon: iconFn() });
+            m._popupHTML = popupFn(d); // 保存HTML，由可拖动callout使用
+            m.on('click', function(ev){
+                L.DomEvent.stopPropagation(ev);
+                if (window.__callout) window.__callout.open(m, type, m._popupHTML);
+            });
             // 添加悬停提示（permanent = 全局开启 或 该标记被单独固定）
             var tipClass = 'factory-tip factory-tip-' + type;
             var isPermanent = showLabels || pinnedMarkers.has(type + '|' + d.name);
@@ -2405,5 +2463,215 @@
 
     </script>
 <div id="import-toast"></div>
+
+        <!-- ========== 可拖动卡片 + 指示线（方案A） ========== -->
+        <script>
+        (function(){
+            var card = document.getElementById('callout-card');
+            var cardTitle = document.getElementById('callout-title');
+            var cardBody = document.getElementById('callout-body');
+            var closeBtn = document.getElementById('callout-close');
+            var header = document.getElementById('callout-header');
+            var svg = document.getElementById('callout-svg');
+            var lineEl = document.getElementById('cl-line');
+            var markerDotEl = document.getElementById('cl-marker-dot');
+            var cardArrowEl = document.getElementById('cl-card-arrow');
+
+            var TYPE_COLOR = { jg: '#e74c3c', zy: '#52c41a', dk: '#3498db', jj: '#1f6feb' };
+
+            var state = { marker: null, type: null, pos: null, dragging: false, dragOffset: {x:0,y:0} };
+
+            function isPanelOpen(){
+                return !document.body.classList.contains('panel-collapsed') &&
+                       document.getElementById('left-panel') &&
+                       document.getElementById('left-panel').offsetParent !== null &&
+                       document.getElementById('left-panel').offsetWidth > 0;
+            }
+            function panelWidth(){ return isPanelOpen() ? document.getElementById('left-panel').offsetWidth : 0; }
+
+            function stripTitle(html){
+                var tmp = document.createElement('div');
+                tmp.innerHTML = html;
+                var t = tmp.querySelector('.popup-title');
+                var titleText = t ? t.textContent : '';
+                if (t) t.remove();
+                return { title: titleText, body: tmp.innerHTML };
+            }
+
+            function defaultCardPos(){
+                var mapEl = document.getElementById('map');
+                var rect = mapEl.getBoundingClientRect();
+                var cw = card.offsetWidth || 260;
+                var ch = card.offsetHeight || 160;
+                var margin = 20;
+                // 默认放在标记点右上方
+                if (state.marker){
+                    var ll = state.marker.getLatLng();
+                    var p = map.latLngToContainerPoint(ll);
+                    var left = p.x + 24;
+                    var top = p.y - ch - 24;
+                    if (left + cw > rect.width - margin) left = p.x - cw - 24;
+                    if (left < panelWidth() + margin) left = panelWidth() + margin;
+                    if (top < margin) top = p.y + 24;
+                    if (top + ch > rect.height - margin) top = rect.height - ch - margin;
+                    if (top < margin) top = margin;
+                    return { x: left, y: top };
+                }
+                return { x: panelWidth() + margin, y: margin };
+            }
+
+            function openCallout(marker, type, popupHTML){
+                state.marker = marker; state.type = type;
+                var parts = stripTitle(popupHTML);
+                cardTitle.textContent = parts.title;
+                cardBody.innerHTML = parts.body;
+                card.style.display = 'block';
+                var color = TYPE_COLOR[type] || '#3498db';
+                card.style.borderColor = color;
+                lineEl.setAttribute('stroke', color);
+                markerDotEl.setAttribute('fill', color);
+                cardArrowEl.setAttribute('fill', color);
+
+                state.pos = defaultCardPos();
+                card.style.left = state.pos.x + 'px';
+                card.style.top = state.pos.y + 'px';
+                redraw();
+            }
+            function closeCallout(){
+                card.style.display = 'none';
+                state.marker = null;
+                lineEl.setAttribute('d','');
+                markerDotEl.setAttribute('cx', -100);
+                markerDotEl.setAttribute('cy', -100);
+                cardArrowEl.setAttribute('points','');
+            }
+
+            function redraw(){
+                if (!state.marker || card.style.display === 'none') return;
+                var ll = state.marker.getLatLng();
+                var p = map.latLngToContainerPoint(ll);
+                var rect = card.getBoundingClientRect();
+                var mapRect = document.getElementById('map').getBoundingClientRect();
+                var c = {
+                    left: rect.left - mapRect.left,
+                    top: rect.top - mapRect.top,
+                    right: rect.right - mapRect.left,
+                    bottom: rect.bottom - mapRect.top,
+                    w: rect.width, h: rect.height,
+                    cx: (rect.left + rect.right)/2 - mapRect.left,
+                    cy: (rect.top + rect.bottom)/2 - mapRect.top
+                };
+                markerDotEl.setAttribute('cx', p.x);
+                markerDotEl.setAttribute('cy', p.y);
+
+                // 选最近的一条边
+                var dx = p.x - c.cx, dy = p.y - c.cy;
+                var edge, ex, ey;
+                // 计算与四条边的交点（射线从中心到p）
+                var scale;
+                var tx = dx !== 0 ? (c.w/2) / Math.abs(dx) : Infinity;
+                var ty = dy !== 0 ? (c.h/2) / Math.abs(dy) : Infinity;
+                if (tx < ty){
+                    edge = dx > 0 ? 'right' : 'left';
+                    scale = tx;
+                } else {
+                    edge = dy > 0 ? 'bottom' : 'top';
+                    scale = ty;
+                }
+                ex = c.cx + dx * scale;
+                ey = c.cy + dy * scale;
+
+                // 折线：marker -> 中点 -> 卡片边（两段，更现代）
+                var mx, my;
+                if (edge === 'left' || edge === 'right'){
+                    mx = ex; my = p.y;
+                } else {
+                    mx = p.x; my = ey;
+                }
+                // 限制中点在可视区域内
+                mx = Math.max(0, Math.min(mapRect.width, mx));
+                my = Math.max(0, Math.min(mapRect.height, my));
+                lineEl.setAttribute('d', 'M ' + p.x + ' ' + p.y + ' L ' + mx + ' ' + my + ' L ' + ex + ' ' + ey);
+
+                // 箭头在卡片边那端，指向卡片中心
+                var adx = c.cx - ex, ady = c.cy - ey;
+                var ang = Math.atan2(ady, adx);
+                var ah = 7;
+                var a1x = ex + ah * Math.cos(ang + Math.PI - 0.4);
+                var a1y = ey + ah * Math.sin(ang + Math.PI - 0.4);
+                var a2x = ex + ah * Math.cos(ang + Math.PI + 0.4);
+                var a2y = ey + ah * Math.sin(ang + Math.PI + 0.4);
+                cardArrowEl.setAttribute('points', ex + ',' + ey + ' ' + a1x + ',' + a1y + ' ' + a2x + ',' + a2y);
+            }
+
+            // 拖动
+            function onDown(e){
+                e.preventDefault();
+                state.dragging = true;
+                card.classList.add('dragging');
+                var pt = e.touches ? e.touches[0] : e;
+                var rect = card.getBoundingClientRect();
+                state.dragOffset.x = pt.clientX - rect.left;
+                state.dragOffset.y = pt.clientY - rect.top;
+                document.addEventListener('mousemove', onMove);
+                document.addEventListener('mouseup', onUp);
+                document.addEventListener('touchmove', onMove, {passive:false});
+                document.addEventListener('touchend', onUp);
+            }
+            function onMove(e){
+                if (!state.dragging) return;
+                if (e.touches) e.preventDefault();
+                var pt = e.touches ? e.touches[0] : e;
+                var mapEl = document.getElementById('map');
+                var mapRect = mapEl.getBoundingClientRect();
+                var x = pt.clientX - mapRect.left - state.dragOffset.x;
+                var y = pt.clientY - mapRect.top - state.dragOffset.y;
+                var cw = card.offsetWidth, ch = card.offsetHeight;
+                x = Math.max(panelWidth(), Math.min(mapRect.width - cw, x));
+                y = Math.max(0, Math.min(mapRect.height - ch, y));
+                card.style.left = x + 'px';
+                card.style.top = y + 'px';
+                redraw();
+            }
+            function onUp(){
+                state.dragging = false;
+                card.classList.remove('dragging');
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+                document.removeEventListener('touchmove', onMove);
+                document.removeEventListener('touchend', onUp);
+            }
+            header.addEventListener('mousedown', onDown);
+            header.addEventListener('touchstart', onDown, {passive:false});
+            closeBtn.addEventListener('click', closeCallout);
+
+            // 暴露给外部
+            window.__callout = { open: openCallout, close: closeCallout, redraw: redraw };
+
+            // 地图移动/缩放时重绘
+            function bindMap(){
+                if (typeof map === 'undefined') { setTimeout(bindMap, 50); return; }
+                map.on('move zoom zoomend moveend viewreset resize', redraw);
+            }
+            bindMap();
+        })();
+
+        // 拦截所有marker的click，改用callout
+        (function bindMarkerClicks(){
+            if (typeof map === 'undefined') { setTimeout(bindMarkerClicks, 50); return; }
+            map.on('layeradd', function(e){
+                var layer = e.layer;
+                if (layer && layer._popupHTML && !layer.__calloutBound){
+                    layer.__calloutBound = true;
+                    layer.off('click'); // 去掉默认popup（虽然没bind）
+                    layer.on('click', function(ev){
+                        L.DomEvent.stopPropagation(ev);
+                        window.__callout.open(layer, layer.ftype, layer._popupHTML);
+                    });
+                }
+            });
+        })();
+        </script>
+
 </body>
 </html>
